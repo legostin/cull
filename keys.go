@@ -18,6 +18,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleFilterKey(msg)
 	}
 
+	if m.mode == modeDryRun {
+		return m.handleDryRunKey(msg)
+	}
+
 	// q quits in normal and confirm modes
 	if msg.String() == "q" {
 		return m, tea.Quit
@@ -33,22 +37,30 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor++
 		}
 		m.clampOffset()
+		cmd := m.resetNameScroll()
+		return m, cmd
 
 	case "k", "up":
 		if m.cursor > 0 {
 			m.cursor--
 		}
 		m.clampOffset()
+		cmd := m.resetNameScroll()
+		return m, cmd
 
 	case "g":
 		m.cursor = 0
 		m.clampOffset()
+		cmd := m.resetNameScroll()
+		return m, cmd
 
 	case "G":
 		if len(m.entries) > 0 {
 			m.cursor = len(m.entries) - 1
 		}
 		m.clampOffset()
+		cmd := m.resetNameScroll()
+		return m, cmd
 
 	case "enter":
 		if m.cursor < len(m.entries) && m.entries[m.cursor].IsParent {
@@ -115,6 +127,66 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "f":
 		m.mode = modeFilter
+
+	case "h":
+		m.showHidden = !m.showHidden
+		m.applyFilter()
+		if m.cursor >= len(m.entries) && len(m.entries) > 0 {
+			m.cursor = len(m.entries) - 1
+		}
+		if len(m.entries) == 0 {
+			m.cursor = 0
+		}
+		m.clampOffset()
+
+	case "t":
+		// Cycle sort mode: size -> name -> updated -> created -> size
+		switch m.sortBy {
+		case sortSizeDesc:
+			m.sortBy = sortNameAsc
+		case sortNameAsc:
+			m.sortBy = sortUpdatedDesc
+		case sortUpdatedDesc:
+			m.sortBy = sortCreatedDesc
+		case sortCreatedDesc:
+			m.sortBy = sortSizeDesc
+		}
+		// Remember cursor position
+		var cursorPath string
+		if m.cursor < len(m.entries) {
+			cursorPath = m.entries[m.cursor].Path
+		}
+		sortEntries(m.allEntries, m.sortBy)
+		m.applyFilter()
+		// Restore cursor
+		if cursorPath != "" {
+			for i, e := range m.entries {
+				if e.Path == cursorPath {
+					m.cursor = i
+					break
+				}
+			}
+		}
+		m.clampOffset()
+		cmd := m.resetNameScroll()
+		return m, cmd
+
+	case "tab":
+		// Toggle trash / permanent delete mode
+		if m.deleteType == deleteTrash {
+			m.deleteType = deletePermanent
+		} else {
+			m.deleteType = deleteTrash
+		}
+
+	case "e":
+		// Dry-run preview
+		if len(m.selected) == 0 && m.cursor < len(m.entries) && !m.entries[m.cursor].IsParent {
+			m.selected[m.entries[m.cursor].Path] = true
+		}
+		if len(m.selected) > 0 {
+			m.mode = modeDryRun
+		}
 	}
 
 	return m, nil
@@ -127,10 +199,17 @@ func (m model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		for p := range m.selected {
 			paths = append(paths, p)
 		}
+		useTrash := m.deleteType == deleteTrash
 		return m, func() tea.Msg {
 			var deleted []string
 			for _, p := range paths {
-				if err := os.RemoveAll(p); err != nil {
+				var err error
+				if useTrash {
+					err = moveToTrash(p)
+				} else {
+					err = os.RemoveAll(p)
+				}
+				if err != nil {
 					return deleteErrMsg{err: err, deleted: deleted}
 				}
 				deleted = append(deleted, p)
@@ -175,6 +254,14 @@ func (m model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.clampOffset()
 		}
+	}
+	return m, nil
+}
+
+func (m model) handleDryRunKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "e", "q":
+		m.mode = modeNormal
 	}
 	return m, nil
 }

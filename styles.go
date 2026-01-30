@@ -4,14 +4,14 @@ import "github.com/charmbracelet/lipgloss"
 
 var (
 	// Colors — k9s-inspired dark theme
-	colorFg         = lipgloss.Color("#e0e0e0")
-	colorDim        = lipgloss.Color("#666677")
-	colorBlue       = lipgloss.Color("#5599dd")
-	colorYellow     = lipgloss.Color("#e8c547")
-	colorGreen      = lipgloss.Color("#44cc88")
-	colorRed        = lipgloss.Color("#ee5566")
-	colorCursorBg   = lipgloss.Color("#264f78")
-	colorBorder     = lipgloss.Color("#444466")
+	colorFg       = lipgloss.Color("#e0e0e0")
+	colorDim      = lipgloss.Color("#666677")
+	colorBlue     = lipgloss.Color("#5599dd")
+	colorYellow   = lipgloss.Color("#e8c547")
+	colorGreen    = lipgloss.Color("#44cc88")
+	colorRed      = lipgloss.Color("#ee5566")
+	colorCursorBg = lipgloss.Color("#264f78")
+	colorBorder   = lipgloss.Color("#444466")
 
 	// Title bar
 	titleStyle = lipgloss.NewStyle().
@@ -61,6 +61,11 @@ var (
 				Width(9).
 				Align(lipgloss.Right)
 
+	// Date column (created / updated)
+	dateStyle = lipgloss.NewStyle().
+			Foreground(colorDim).
+			Width(10)
+
 	// Status bar
 	statusBarStyle = lipgloss.NewStyle().
 			Foreground(colorDim).
@@ -102,4 +107,20 @@ var (
 			Foreground(colorGreen).
 			Bold(true).
 			Padding(0, 1)
+
+	// Proportion bar (filled portion)
+	barFilledStyle = lipgloss.NewStyle().
+			Foreground(colorGreen)
+
+	// Dry-run preview header
+	dryRunHeaderStyle = lipgloss.NewStyle().
+				Foreground(colorYellow).
+				Bold(true).
+				Padding(0, 1)
+
+	// Title bar — danger (permanent delete mode)
+	titleStyleDanger = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(colorRed).
+				Padding(0, 1)
 )

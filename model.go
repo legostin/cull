@@ -2,11 +2,21 @@ package main
 
 import (
 	"path/filepath"
-	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// nameScrollTickMsg fires periodically to advance the marquee.
+type nameScrollTickMsg struct{}
+
+// nameScrollTickCmd returns a command that fires after the marquee interval.
+func nameScrollTickCmd() tea.Cmd {
+	return tea.Tick(150*time.Millisecond, func(time.Time) tea.Msg {
+		return nameScrollTickMsg{}
+	})
+}
 
 type mode int
 
@@ -14,6 +24,23 @@ const (
 	modeNormal mode = iota
 	modeConfirm
 	modeFilter
+	modeDryRun
+)
+
+type sortMode int
+
+const (
+	sortSizeDesc sortMode = iota
+	sortNameAsc
+	sortUpdatedDesc
+	sortCreatedDesc
+)
+
+type deleteMode int
+
+const (
+	deleteTrash     deleteMode = iota
+	deletePermanent
 )
 
 // deleteDoneMsg is sent after deletion completes.
@@ -43,6 +70,15 @@ type model struct {
 	// Filter state
 	filterText string
 
+	// Hidden files toggle
+	showHidden bool
+
+	// Sort mode
+	sortBy sortMode
+
+	// Delete mode (trash vs permanent)
+	deleteType deleteMode
+
 	// Disk free space (bytes) for the filesystem containing path
 	diskFree uint64
 
@@ -56,6 +92,13 @@ type model struct {
 	// Cache: directory path -> scanned entries
 	cache map[string][]Entry
 
+	// Name column marquee scroll state
+	nameScroll     int    // tick counter for marquee animation
+	nameScrollPath string // path of entry being scrolled (reset on cursor change)
+
+	// Multi-root support
+	rootPaths     []string
+	isVirtualRoot bool
 }
 
 func newModel(path string) model {
@@ -64,22 +107,58 @@ func newModel(path string) model {
 		selected:   make(map[string]bool),
 		lastSelect: -1,
 		scanning:   true,
+		showHidden: true,
+		sortBy:     sortSizeDesc,
+		deleteType: deleteTrash,
 		cache:      make(map[string][]Entry),
 	}
 }
 
-// applyFilter rebuilds entries from allEntries based on filterText.
-func (m *model) applyFilter() {
-	if m.filterText == "" {
-		m.entries = m.allEntries
-		return
+func newMultiRootModel(paths []string) model {
+	m := model{
+		path:          "/ (multiple roots)",
+		selected:      make(map[string]bool),
+		lastSelect:    -1,
+		showHidden:    true,
+		sortBy:        sortSizeDesc,
+		deleteType:    deleteTrash,
+		cache:         make(map[string][]Entry),
+		rootPaths:     paths,
+		isVirtualRoot: true,
 	}
+	// Build virtual root entries
+	entries := make([]Entry, 0, len(paths))
+	for _, p := range paths {
+		entries = append(entries, Entry{
+			Name:  p,
+			Path:  p,
+			IsDir: true,
+		})
+	}
+	m.allEntries = entries
+	m.entries = entries
+	return m
+}
+
+// applyFilter rebuilds entries from allEntries based on filterText and showHidden.
+func (m *model) applyFilter() {
 	lower := strings.ToLower(m.filterText)
 	filtered := make([]Entry, 0, len(m.allEntries))
 	for _, e := range m.allEntries {
-		if e.IsParent || strings.Contains(strings.ToLower(e.Name), lower) {
+		// Always include parent entry
+		if e.IsParent {
 			filtered = append(filtered, e)
+			continue
 		}
+		// Hidden files filter
+		if !m.showHidden && strings.HasPrefix(e.Name, ".") {
+			continue
+		}
+		// Text filter
+		if m.filterText != "" && !strings.Contains(strings.ToLower(e.Name), lower) {
+			continue
+		}
+		filtered = append(filtered, e)
 	}
 	m.entries = filtered
 }
@@ -102,6 +181,9 @@ func (m *model) clampOffset() {
 }
 
 func (m model) Init() tea.Cmd {
+	if m.isVirtualRoot {
+		return nil
+	}
 	return quickScanCmd(m.path)
 }
 
@@ -119,9 +201,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.offset = 0
 		m.errMsg = ""
 		m.diskFree = diskFreeSpace(msg.path)
+		sortEntries(m.allEntries, m.sortBy)
 		m.applyFilter()
 		m.cache[msg.path] = m.allEntries
-		return m.startSizingUnsized()
+		scrollCmd := m.resetNameScroll()
+		mdl, sizeCmd := m.startSizingUnsized()
+		return mdl, tea.Batch(sizeCmd, scrollCmd)
 
 	case dirSizeStartMsg:
 		m.scanningDir = filepath.Base(msg.path)
@@ -179,11 +264,110 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = modeNormal
 		return m, nil
 
+	case nameScrollTickMsg:
+		return m.handleNameScrollTick()
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
 
 	return m, nil
+}
+
+// handleNameScrollTick advances the marquee animation for the cursor row name.
+func (m model) handleNameScrollTick() (tea.Model, tea.Cmd) {
+	// Check the cursor entry still matches
+	if m.cursor >= len(m.entries) {
+		return m, nil
+	}
+	e := m.entries[m.cursor]
+	if e.Path != m.nameScrollPath {
+		return m, nil
+	}
+
+	name := e.Name
+	if e.IsDir {
+		name += "/"
+	}
+
+	nameWidth := m.nameColWidth()
+	nameRunes := []rune(name)
+	maxOffset := len(nameRunes) - nameWidth
+	if maxOffset <= 0 {
+		return m, nil // no scrolling needed
+	}
+
+	const startPause = 7 // ticks to pause at start (~1s)
+	const endPause = 7   // ticks to pause at end
+
+	m.nameScroll++
+	total := startPause + maxOffset + endPause
+	if m.nameScroll >= total {
+		m.nameScroll = 0
+	}
+
+	return m, nameScrollTickCmd()
+}
+
+// nameColWidth returns the name column width based on current terminal width.
+func (m model) nameColWidth() int {
+	contentWidth := m.width - 2
+	barWidth := 10
+	if contentWidth > 100 {
+		barWidth = 15
+	} else if contentWidth < 60 {
+		barWidth = 5
+	}
+	// marker(2) + bar + space + size(9) + gap(2) + name + gap(2) + created(10) + gap(2) + updated(10)
+	fixedWidth := 2 + barWidth + 1 + 9 + 2 + 2 + 10 + 2 + 10
+	nameWidth := contentWidth - fixedWidth
+	if nameWidth < 10 {
+		nameWidth = 10
+	}
+	if nameWidth > 40 {
+		nameWidth = 40
+	}
+	return nameWidth
+}
+
+// nameScrollOffset returns the current rune offset for marquee display.
+func (m model) nameScrollOffset(nameRuneLen, nameWidth int) int {
+	maxOffset := nameRuneLen - nameWidth
+	if maxOffset <= 0 {
+		return 0
+	}
+	const startPause = 7
+	tick := m.nameScroll
+	if tick < startPause {
+		return 0
+	}
+	off := tick - startPause
+	if off > maxOffset {
+		return maxOffset
+	}
+	return off
+}
+
+// resetNameScroll resets marquee state and starts ticking if needed.
+func (m *model) resetNameScroll() tea.Cmd {
+	m.nameScroll = 0
+
+	if m.cursor >= len(m.entries) {
+		m.nameScrollPath = ""
+		return nil
+	}
+	e := m.entries[m.cursor]
+	m.nameScrollPath = e.Path
+
+	name := e.Name
+	if e.IsDir {
+		name += "/"
+	}
+	nameWidth := m.nameColWidth()
+	if len([]rune(name)) > nameWidth {
+		return nameScrollTickCmd()
+	}
+	return nil
 }
 
 // startSizingUnsized kicks off background sizing for any unsized directory entries.
@@ -226,15 +410,8 @@ func (m *model) updateEntrySize(path string, size int64) {
 		}
 	}
 
-	// Re-sort allEntries: find where non-parent entries start
-	start := 0
-	if len(m.allEntries) > 0 && m.allEntries[0].IsParent {
-		start = 1
-	}
-	sub := m.allEntries[start:]
-	sort.Slice(sub, func(i, j int) bool {
-		return sub[i].Size > sub[j].Size
-	})
+	// Re-sort allEntries using current sort mode
+	sortEntries(m.allEntries, m.sortBy)
 
 	// Reapply filter to rebuild entries from sorted allEntries
 	m.applyFilter()
@@ -286,14 +463,18 @@ func (m model) navigateInto(path string) (tea.Model, tea.Cmd) {
 	m.selected = make(map[string]bool)
 	m.lastSelect = -1
 	m.filterText = ""
+	m.isVirtualRoot = false
 
 	// Save current entries to cache before leaving
-	m.cache[m.path] = m.allEntries
+	if m.path != "/ (multiple roots)" {
+		m.cache[m.path] = m.allEntries
+	}
 
 	if cached, ok := m.cache[path]; ok {
 		m.path = path
 		m.allEntries = cached
 		m.diskFree = diskFreeSpace(path)
+		sortEntries(m.allEntries, m.sortBy)
 		m.applyFilter()
 		m.cursor = 0
 		m.offset = 0
@@ -312,8 +493,21 @@ func (m model) navigateInto(path string) (tea.Model, tea.Cmd) {
 
 // navigateUp goes to the parent directory, using cache and only re-indexing the dir we left.
 func (m model) navigateUp() (tea.Model, tea.Cmd) {
+	// If we have root paths and we're at one of them, go back to virtual root
+	if len(m.rootPaths) > 0 {
+		for _, rp := range m.rootPaths {
+			if m.path == rp {
+				return m.navigateToVirtualRoot(), nil
+			}
+		}
+	}
+
 	parent := filepath.Dir(m.path)
 	if parent == m.path {
+		// At filesystem root, if multi-root go to virtual root
+		if len(m.rootPaths) > 0 {
+			return m.navigateToVirtualRoot(), nil
+		}
 		return m, nil
 	}
 
@@ -339,6 +533,7 @@ func (m model) navigateUp() (tea.Model, tea.Cmd) {
 				break
 			}
 		}
+		sortEntries(m.allEntries, m.sortBy)
 		m.applyFilter()
 
 		// Position cursor on the directory we came from
@@ -362,4 +557,31 @@ func (m model) navigateUp() (tea.Model, tea.Cmd) {
 	m.dirsTotal = 0
 	m.dirsDone = 0
 	return m, quickScanCmd(parent)
+}
+
+// navigateToVirtualRoot returns to the virtual multi-root view.
+func (m model) navigateToVirtualRoot() model {
+	m.cache[m.path] = m.allEntries
+	m.selected = make(map[string]bool)
+	m.lastSelect = -1
+	m.filterText = ""
+	m.isVirtualRoot = true
+	m.path = "/ (multiple roots)"
+	m.scanning = false
+	m.scanQueue = nil
+	m.scanningDir = ""
+
+	entries := make([]Entry, 0, len(m.rootPaths))
+	for _, p := range m.rootPaths {
+		entries = append(entries, Entry{
+			Name:  p,
+			Path:  p,
+			IsDir: true,
+		})
+	}
+	m.allEntries = entries
+	m.applyFilter()
+	m.cursor = 0
+	m.offset = 0
+	return m
 }

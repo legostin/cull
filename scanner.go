@@ -5,18 +5,21 @@ import (
 	"path/filepath"
 	"sort"
 	"syscall"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Entry represents a file or directory with its computed size.
 type Entry struct {
-	Name     string
-	Path     string
-	Size     int64
-	IsDir    bool
-	IsParent bool // true for the ".." entry
-	Sized    bool // true when the size has been fully computed
+	Name       string
+	Path       string
+	Size       int64
+	IsDir      bool
+	IsParent   bool      // true for the ".." entry
+	Sized      bool      // true when the size has been fully computed
+	ModTime    time.Time // last modification time
+	CreateTime time.Time // birth / creation time (macOS)
 }
 
 // quickScanDoneMsg is sent when the quick (non-recursive) scan completes.
@@ -45,6 +48,34 @@ type scanErrMsg struct {
 	err error
 }
 
+// sortEntries sorts entries in place according to the given sort mode.
+// The parent entry (..) is always kept first.
+func sortEntries(entries []Entry, mode sortMode) {
+	start := 0
+	if len(entries) > 0 && entries[0].IsParent {
+		start = 1
+	}
+	sub := entries[start:]
+	switch mode {
+	case sortSizeDesc:
+		sort.Slice(sub, func(i, j int) bool {
+			return sub[i].Size > sub[j].Size
+		})
+	case sortNameAsc:
+		sort.Slice(sub, func(i, j int) bool {
+			return sub[i].Name < sub[j].Name
+		})
+	case sortUpdatedDesc:
+		sort.Slice(sub, func(i, j int) bool {
+			return sub[i].ModTime.After(sub[j].ModTime)
+		})
+	case sortCreatedDesc:
+		sort.Slice(sub, func(i, j int) bool {
+			return sub[i].CreateTime.After(sub[j].CreateTime)
+		})
+	}
+}
+
 // quickScanDir reads a directory without recursion.
 // Files get their real size; directories get Size = 0.
 func quickScanDir(path string) ([]Entry, error) {
@@ -62,20 +93,26 @@ func quickScanDir(path string) ([]Entry, error) {
 			IsDir: de.IsDir(),
 		}
 
-		if !de.IsDir() {
-			info, err := de.Info()
-			if err == nil {
+		info, infoErr := de.Info()
+		if infoErr == nil {
+			entry.ModTime = info.ModTime()
+			if !de.IsDir() {
 				entry.Size = info.Size()
 			}
+			// Extract birth time (creation time) via syscall on macOS
+			if sys, ok := info.Sys().(*syscall.Stat_t); ok {
+				entry.CreateTime = time.Unix(sys.Birthtimespec.Sec, sys.Birthtimespec.Nsec)
+			}
+		}
+		if !de.IsDir() {
 			entry.Sized = true
 		}
 
 		entries = append(entries, entry)
 	}
 
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Size > entries[j].Size
-	})
+	// Default sort: size descending
+	sortEntries(entries, sortSizeDesc)
 
 	// Prepend ".." entry if not at filesystem root
 	parent := filepath.Dir(path)
