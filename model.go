@@ -32,6 +32,7 @@ type model struct {
 	allEntries []Entry // full unfiltered list
 	entries    []Entry // filtered view (what cursor navigates)
 	cursor     int
+	offset     int             // scroll offset for viewport
 	selected   map[string]bool // paths of selected entries
 	lastSelect int             // last toggled index for range-select
 	mode       mode
@@ -42,6 +43,9 @@ type model struct {
 	// Filter state
 	filterText string
 
+	// Disk free space (bytes) for the filesystem containing path
+	diskFree uint64
+
 	// Progressive scanning state
 	scanning    bool
 	scanQueue   []string
@@ -51,6 +55,7 @@ type model struct {
 
 	// Cache: directory path -> scanned entries
 	cache map[string][]Entry
+
 }
 
 func newModel(path string) model {
@@ -79,6 +84,23 @@ func (m *model) applyFilter() {
 	m.entries = filtered
 }
 
+// clampOffset adjusts m.offset so the cursor stays within the visible viewport.
+func (m *model) clampOffset() {
+	visibleRows := m.height - 9
+	if m.mode == modeConfirm {
+		visibleRows -= 2
+	}
+	if visibleRows < 1 {
+		visibleRows = 1
+	}
+	if m.cursor < m.offset {
+		m.offset = m.cursor
+	}
+	if m.cursor >= m.offset+visibleRows {
+		m.offset = m.cursor - visibleRows + 1
+	}
+}
+
 func (m model) Init() tea.Cmd {
 	return quickScanCmd(m.path)
 }
@@ -94,7 +116,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.allEntries = msg.entries
 		m.path = msg.path
 		m.cursor = 0
+		m.offset = 0
 		m.errMsg = ""
+		m.diskFree = diskFreeSpace(msg.path)
 		m.applyFilter()
 		m.cache[msg.path] = m.allEntries
 		return m.startSizingUnsized()
@@ -144,11 +168,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case deleteDoneMsg:
 		m.removeDeleted(msg.deleted)
+		m.diskFree = diskFreeSpace(m.path)
 		m.mode = modeNormal
 		return m, nil
 
 	case deleteErrMsg:
 		m.removeDeleted(msg.deleted)
+		m.diskFree = diskFreeSpace(m.path)
 		m.errMsg = msg.err.Error()
 		m.mode = modeNormal
 		return m, nil
@@ -222,6 +248,7 @@ func (m *model) updateEntrySize(path string, size int64) {
 			}
 		}
 	}
+	m.clampOffset()
 }
 
 // removeDeleted removes deleted paths from entries and selection, fixes cursor.
@@ -251,6 +278,7 @@ func (m *model) removeDeleted(paths []string) {
 	if len(m.entries) == 0 {
 		m.cursor = 0
 	}
+	m.clampOffset()
 }
 
 // navigateInto enters a subdirectory, using cache if available.
@@ -265,8 +293,10 @@ func (m model) navigateInto(path string) (tea.Model, tea.Cmd) {
 	if cached, ok := m.cache[path]; ok {
 		m.path = path
 		m.allEntries = cached
+		m.diskFree = diskFreeSpace(path)
 		m.applyFilter()
 		m.cursor = 0
+		m.offset = 0
 		m.errMsg = ""
 		return m.startSizingUnsized()
 	}
@@ -299,6 +329,7 @@ func (m model) navigateUp() (tea.Model, tea.Cmd) {
 	if cached, ok := m.cache[parent]; ok {
 		m.path = parent
 		m.allEntries = cached
+		m.diskFree = diskFreeSpace(parent)
 		m.errMsg = ""
 
 		// Mark the directory we came from as unsized so it gets re-indexed
@@ -312,12 +343,14 @@ func (m model) navigateUp() (tea.Model, tea.Cmd) {
 
 		// Position cursor on the directory we came from
 		m.cursor = 0
+		m.offset = 0
 		for i, e := range m.entries {
 			if e.Path == prevDir {
 				m.cursor = i
 				break
 			}
 		}
+		m.clampOffset()
 
 		return m.startSizingUnsized()
 	}

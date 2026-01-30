@@ -1,4 +1,4 @@
-module space-free
+module github.com/legostin/cull
 
 go 1.21
 

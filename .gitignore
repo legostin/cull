@@ -1,4 +1,5 @@
 # Binary
+cull
 space-free
 
 # IDE
@@ -15,3 +16,4 @@ Thumbs.db
 # Test/debug
 *.test
 *.out
+firebase-debug.log

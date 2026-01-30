@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -31,19 +32,23 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor < len(m.entries)-1 {
 			m.cursor++
 		}
+		m.clampOffset()
 
 	case "k", "up":
 		if m.cursor > 0 {
 			m.cursor--
 		}
+		m.clampOffset()
 
 	case "g":
 		m.cursor = 0
+		m.clampOffset()
 
 	case "G":
 		if len(m.entries) > 0 {
 			m.cursor = len(m.entries) - 1
 		}
+		m.clampOffset()
 
 	case "enter":
 		if m.cursor < len(m.entries) && m.entries[m.cursor].IsParent {
@@ -68,9 +73,6 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.selected[p] = true
 			}
 			m.lastSelect = m.cursor
-			if m.cursor < len(m.entries)-1 {
-				m.cursor++
-			}
 		}
 
 	case "S":
@@ -102,6 +104,14 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.mode = modeConfirm
+
+	case " ":
+		if m.cursor < len(m.entries) && !m.entries[m.cursor].IsParent {
+			cmd := exec.Command("qlmanage", "-p", m.entries[m.cursor].Path)
+			cmd.Stdout = nil
+			cmd.Stderr = nil
+			cmd.Start()
+		}
 
 	case "f":
 		m.mode = modeFilter
@@ -143,6 +153,7 @@ func (m model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filterText = ""
 		m.applyFilter()
 		m.cursor = 0
+		m.offset = 0
 		m.mode = modeNormal
 	case "backspace":
 		if len(m.filterText) > 0 {
@@ -152,6 +163,7 @@ func (m model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.cursor >= len(m.entries) && len(m.entries) > 0 {
 				m.cursor = len(m.entries) - 1
 			}
+			m.clampOffset()
 		}
 	default:
 		r := msg.Runes
@@ -161,6 +173,7 @@ func (m model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.cursor >= len(m.entries) && len(m.entries) > 0 {
 				m.cursor = len(m.entries) - 1
 			}
+			m.clampOffset()
 		}
 	}
 	return m, nil

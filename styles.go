@@ -80,6 +80,11 @@ var (
 			Bold(true).
 			Padding(0, 1)
 
+	// Scanning directory name (inline, yellow bold)
+	scanningNameStyle = lipgloss.NewStyle().
+				Foreground(colorYellow).
+				Bold(true)
+
 	// Scanning indicator
 	scanningStyle = lipgloss.NewStyle().
 			Foreground(colorYellow).

@@ -38,10 +38,29 @@ func (m model) View() string {
 	var b strings.Builder
 	contentWidth := m.width - 2
 
-	// Title
-	title := titleStyle.Width(contentWidth).Render(" space-free")
-	b.WriteString(title)
-	b.WriteString("\n")
+	// ASCII art logo + disk free
+	logo := []string{
+		`   ___ _   _ | | |`,
+		`  / __| | | || | |`,
+		` | (__| |_| || | |`,
+		`  \___|\__,_||_|_|`,
+	}
+	freeText := ""
+	if m.diskFree > 0 {
+		freeText = fmt.Sprintf("%s free", formatSize(int64(m.diskFree)))
+	}
+	for i, line := range logo {
+		styled := titleStyle.Render(line)
+		if i == 1 && freeText != "" {
+			pad := contentWidth - lipgloss.Width(styled) - len(freeText)
+			if pad < 1 {
+				pad = 1
+			}
+			styled += strings.Repeat(" ", pad) + lipgloss.NewStyle().Foreground(colorGreen).Bold(true).Render(freeText)
+		}
+		b.WriteString(styled)
+		b.WriteString("\n")
+	}
 
 	// Path
 	pathLine := pathStyle.Width(contentWidth).Render(" " + m.path)
@@ -64,7 +83,7 @@ func (m model) View() string {
 	b.WriteString("\n")
 
 	// Calculate visible rows
-	usedLines := 6 // title + path + sep + header + help + status
+	usedLines := 9 // logo(4) + path + sep + header + help + status
 	if m.mode == modeConfirm {
 		usedLines += 2
 	}
@@ -73,11 +92,7 @@ func (m model) View() string {
 		visibleRows = 1
 	}
 
-	// Scroll offset
-	offset := 0
-	if m.cursor >= visibleRows {
-		offset = m.cursor - visibleRows + 1
-	}
+	offset := m.offset
 
 	// Entries
 	end := offset + visibleRows
@@ -103,12 +118,20 @@ func (m model) View() string {
 		}
 
 		pending := !e.Sized
-		sizeFormatted := formatSize(e.Size)
+
+		var sizeFormatted string
+		if pending {
+			sizeFormatted = "..."
+		} else {
+			sizeFormatted = formatSize(e.Size)
+		}
 
 		name := e.Name
 		if e.IsDir {
 			name += "/"
 		}
+
+		isScanning := m.scanning && !e.IsParent && e.IsDir && e.Name == m.scanningDir
 
 		markerText := "  "
 		if isSelected {
@@ -117,7 +140,11 @@ func (m model) View() string {
 
 		var row string
 		if isCursor {
-			plain := fmt.Sprintf("%s%9s  %s", markerText, sizeFormatted, name)
+			displayName := name
+			if isScanning {
+				displayName = name + " ◐"
+			}
+			plain := fmt.Sprintf("%s%9s  %s", markerText, sizeFormatted, displayName)
 			row = cursorStyle.Width(contentWidth).Render(plain)
 		} else {
 			marker := markerText
@@ -133,7 +160,11 @@ func (m model) View() string {
 			}
 
 			if e.IsDir {
-				row = fmt.Sprintf("%s%s  %s", marker, size, dirStyle.Render(name))
+				nameStyle := dirStyle
+				if isScanning {
+					nameStyle = scanningNameStyle
+				}
+				row = fmt.Sprintf("%s%s  %s", marker, size, nameStyle.Render(name))
 			} else {
 				row = fmt.Sprintf("%s%s  %s", marker, size, name)
 			}
@@ -207,6 +238,9 @@ func (m model) View() string {
 		}
 		if len(m.selected) > 0 {
 			status += fmt.Sprintf(" · %d selected · %s", len(m.selected), formatSize(totalSelected))
+		}
+		if m.diskFree > 0 {
+			status += fmt.Sprintf(" · %s free", formatSize(int64(m.diskFree)))
 		}
 		b.WriteString(statusBarStyle.Width(contentWidth).Render(status))
 	}
