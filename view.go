@@ -239,9 +239,6 @@ func (m model) View() string {
 		if len(m.selected) > 0 {
 			status += fmt.Sprintf(" · %d selected · %s", len(m.selected), formatSize(totalSelected))
 		}
-		if m.diskFree > 0 {
-			status += fmt.Sprintf(" · %s free", formatSize(int64(m.diskFree)))
-		}
 		b.WriteString(statusBarStyle.Width(contentWidth).Render(status))
 	}
 
