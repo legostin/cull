@@ -99,7 +99,7 @@ func quickScanDir(path string) ([]Entry, error) {
 			if !de.IsDir() {
 				entry.Size = info.Size()
 			}
-			entry.CreateTime = extractBirthTime(info)
+			entry.CreateTime = extractBirthTime(fullPath, info)
 		}
 		if !de.IsDir() {
 			entry.Sized = true
