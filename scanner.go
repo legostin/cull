@@ -99,10 +99,7 @@ func quickScanDir(path string) ([]Entry, error) {
 			if !de.IsDir() {
 				entry.Size = info.Size()
 			}
-			// Extract birth time (creation time) via syscall on macOS
-			if sys, ok := info.Sys().(*syscall.Stat_t); ok {
-				entry.CreateTime = time.Unix(sys.Birthtimespec.Sec, sys.Birthtimespec.Nsec)
-			}
+			entry.CreateTime = extractBirthTime(info)
 		}
 		if !de.IsDir() {
 			entry.Sized = true
