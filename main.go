@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -13,7 +14,7 @@ func main() {
 		startPath = os.Args[1]
 	}
 
-	absPath, err := resolveAbsPath(startPath)
+	absPath, err := filepath.Abs(startPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
