@@ -22,7 +22,6 @@ go install github.com/legostin/cull@latest
 ```
 cull                        # scan current directory
 cull ~/Downloads            # scan specific path
-cull ~/Downloads ~/Desktop  # scan multiple roots
 ```
 
 ## Keybindings
