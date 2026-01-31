@@ -1,6 +1,12 @@
 # cull
-
+```
+              | | |
+   / __| | | || | | 
+  | (__| |_| || | | 
+   \___|\__,_||_|_|
+```
 Interactive TUI disk space analyzer. Scan directories, find what's eating your disk, and delete it — all from the terminal.
+<img width="978" height="689" alt="image" src="https://github.com/user-attachments/assets/a118aa4e-e64c-4ab1-b080-a40e36a1332a" />
 
 ## Install
 
