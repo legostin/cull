@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -123,6 +124,35 @@ func proportionBarPlain(size, maxSize int64, barWidth int) string {
 	return strings.Repeat(" ", barWidth-filled) + strings.Repeat("▐", filled)
 }
 
+// renderTabBar renders the tab bar between path and separator.
+func (m model) renderTabBar(contentWidth int) string {
+	type tabInfo struct {
+		id   tabID
+		name string
+	}
+	tabs := []tabInfo{
+		{tabBrowse, "BROWSE"},
+		{tabLargest, "LARGEST"},
+	}
+
+	var parts []string
+	for _, ti := range tabs {
+		label := ti.name
+		// Add scanning indicator for LARGEST tab while deep scan runs
+		if ti.id == tabLargest && ti.id != m.activeTab && m.deepScanning {
+			label += " ◐"
+		}
+
+		if ti.id == m.activeTab {
+			parts = append(parts, tabActiveStyle.Render("["+label+"]"))
+		} else {
+			parts = append(parts, tabInactiveStyle.Render(" "+label+" "))
+		}
+	}
+
+	return " " + strings.Join(parts, " ")
+}
+
 func (m model) View() string {
 	if m.width == 0 {
 		return ""
@@ -168,6 +198,10 @@ func (m model) View() string {
 	b.WriteString(pathLine)
 	b.WriteString("\n")
 
+	// Tab bar
+	b.WriteString(m.renderTabBar(contentWidth))
+	b.WriteString("\n")
+
 	// Separator
 	b.WriteString(lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", contentWidth)))
 	b.WriteString("\n")
@@ -183,9 +217,16 @@ func (m model) View() string {
 		return m.viewDryRun(&b, contentWidth)
 	}
 
+	// Help overlay
+	if m.mode == modeHelp {
+		return m.viewHelp(&b, contentWidth)
+	}
+
+	t := m.tab()
+
 	// Compute max size for proportion bar
 	var maxSize int64
-	for _, e := range m.entries {
+	for _, e := range t.entries {
 		if !e.IsParent && e.Sized && e.Size > maxSize {
 			maxSize = e.Size
 		}
@@ -201,18 +242,29 @@ func (m model) View() string {
 
 	nameWidth := m.nameColWidth()
 
-	// Header: BAR | SIZE | NAME | CREATED | UPDATED
-	header := headerStyle.Render(fmt.Sprintf("  %*s %9s  %-*s  %-10s  %-10s",
-		barWidth, "",
-		sizeHeaderLabel(m.sortBy),
-		nameWidth, nameHeaderLabel(m.sortBy),
-		createdHeaderLabel(m.sortBy),
-		updatedHeaderLabel(m.sortBy)))
-	b.WriteString(header)
+	// Header
+	switch m.activeTab {
+	case tabBrowse:
+		header := headerStyle.Render(fmt.Sprintf("  %*s %9s  %-*s  %-10s  %-10s",
+			barWidth, "",
+			sizeHeaderLabel(m.sortBy),
+			nameWidth, nameHeaderLabel(m.sortBy),
+			createdHeaderLabel(m.sortBy),
+			updatedHeaderLabel(m.sortBy)))
+		b.WriteString(header)
+	case tabLargest:
+		header := headerStyle.Render(fmt.Sprintf("  %*s %9s  %-*s  %-10s  %-10s",
+			barWidth, "",
+			"SIZE▼",
+			nameWidth, "NAME",
+			"CREATED",
+			"UPDATED"))
+		b.WriteString(header)
+	}
 	b.WriteString("\n")
 
 	// Calculate visible rows
-	usedLines := 9 // logo(4) + path + sep + header + help + status
+	usedLines := 11 // logo(4) + path + tabbar + sep + header + sep + help + status
 	if m.mode == modeConfirm {
 		usedLines += 2
 	}
@@ -221,18 +273,24 @@ func (m model) View() string {
 		visibleRows = 1
 	}
 
-	offset := m.offset
+	offset := t.offset
 
 	// Entries
 	end := offset + visibleRows
-	if end > len(m.entries) {
-		end = len(m.entries)
+	if end > len(t.entries) {
+		end = len(t.entries)
+	}
+
+	// Empty-state message for LARGEST tab during scan
+	if m.activeTab == tabLargest && len(t.entries) == 0 && m.deepScanning {
+		b.WriteString(scanningStyle.Render("  Walking directory tree…"))
+		b.WriteString("\n")
 	}
 
 	for i := offset; i < end; i++ {
-		e := m.entries[i]
-		isCursor := i == m.cursor
-		isSelected := m.selected[e.Path]
+		e := t.entries[i]
+		isCursor := i == t.cursor
+		isSelected := t.selected[e.Path]
 
 		// Parent entry (..)
 		if e.IsParent {
@@ -262,7 +320,8 @@ func (m model) View() string {
 			name += "/"
 		}
 
-		isScanning := m.scanning && !e.IsParent && e.IsDir && e.Name == m.scanningDir
+		isActiveScanning := m.deepScanning && !e.IsParent && e.IsDir && e.Name == m.deepScanDir
+		isUnsized := !e.IsParent && e.IsDir && !e.Sized
 
 		markerText := "  "
 		if isSelected {
@@ -280,17 +339,24 @@ func (m model) View() string {
 		createdStr := formatDate(e.CreateTime)
 		updatedStr := formatDate(e.ModTime)
 
+		displayName := name
+		if m.activeTab == tabLargest && e.Path != "" {
+			if rel, err := filepath.Rel(m.path, e.Path); err == nil {
+				displayName = rel
+			}
+		}
+
 		var row string
 		if isCursor {
-			displayName := name
-			if isScanning {
-				displayName = name + " ◐"
+			dn := displayName
+			if isActiveScanning {
+				dn = dn + " ◐"
 			}
 			// Marquee: scroll long names under cursor
-			nameRunes := []rune(displayName)
+			nameRunes := []rune(dn)
 			if len(nameRunes) > nameWidth {
 				off := m.nameScrollOffset(len(nameRunes), nameWidth)
-				displayName = marqueeSlice(displayName, nameWidth, off)
+				dn = marqueeSlice(dn, nameWidth, off)
 			}
 			// Use plain bar (no ANSI) so cursorStyle controls fg/bg uniformly
 			var plainBar string
@@ -299,7 +365,7 @@ func (m model) View() string {
 			} else {
 				plainBar = strings.Repeat(" ", barWidth)
 			}
-			plain := fmt.Sprintf("%s%s %9s  %-*s  %-10s  %-10s", markerText, plainBar, sizeFormatted, nameWidth, displayName, createdStr, updatedStr)
+			plain := fmt.Sprintf("%s%s %9s  %-*s  %-10s  %-10s", markerText, plainBar, sizeFormatted, nameWidth, dn, createdStr, updatedStr)
 			row = cursorStyle.Width(contentWidth).Render(plain)
 		} else {
 			marker := markerText
@@ -318,12 +384,14 @@ func (m model) View() string {
 			updated := dateStyle.Render(updatedStr)
 
 			// Truncate name for non-cursor rows
-			truncName := truncateName(name, nameWidth)
+			truncName := truncateName(displayName, nameWidth)
 
 			if e.IsDir {
 				nameStyleLocal := dirStyle
-				if isScanning {
+				if isActiveScanning {
 					nameStyleLocal = scanningNameStyle
+				} else if isUnsized {
+					nameStyleLocal = dirUnsizedStyle
 				}
 				styledName := nameStyleLocal.Render(truncName)
 				namePad := nameWidth - lipgloss.Width(styledName)
@@ -353,8 +421,8 @@ func (m model) View() string {
 	if m.mode == modeConfirm {
 		totalSize := int64(0)
 		count := 0
-		for p := range m.selected {
-			for _, e := range m.entries {
+		for p := range t.selected {
+			for _, e := range t.entries {
 				if e.Path == p {
 					totalSize += e.Size
 					count++
@@ -371,19 +439,19 @@ func (m model) View() string {
 		b.WriteString(confirmStyle.Width(contentWidth).Render(confirmText))
 		b.WriteString("\n")
 	} else if m.mode == modeFilter {
-		filterLine := fmt.Sprintf(" Filter: %s█", m.filterText)
+		filterLine := fmt.Sprintf(" Filter: %s█", t.filterText)
 		b.WriteString(filterStyle.Width(contentWidth).Render(filterLine))
 		b.WriteString("\n")
 	} else {
-		help := fmt.Sprintf(" %s select %s range %s delete %s filter %s hidden %s sort %s preview %s trash %s quit",
+		help := fmt.Sprintf(" %s select %s delete %s filter %s sort %s preview %s del mode %s tabs %s help %s quit",
 			helpKeyStyle.Render("<s>"),
-			helpKeyStyle.Render("<S>"),
 			helpKeyStyle.Render("<d>"),
 			helpKeyStyle.Render("<f>"),
-			helpKeyStyle.Render("<h>"),
 			helpKeyStyle.Render("<t>"),
 			helpKeyStyle.Render("<e>"),
 			helpKeyStyle.Render("<tab>"),
+			helpKeyStyle.Render("<shift>-<tab>"),
+			helpKeyStyle.Render("<?>"),
 			helpKeyStyle.Render("<q>"),
 		)
 		b.WriteString(helpDescStyle.Width(contentWidth).Render(help))
@@ -391,26 +459,35 @@ func (m model) View() string {
 	}
 
 	// Status line
-	if m.scanning {
-		status := fmt.Sprintf(" Scanning: %s/ · %d/%d dirs · %d items",
-			m.scanningDir, m.dirsDone, m.dirsTotal, len(m.allEntries))
+	statusParts := []string{}
+
+	if m.deepScanning {
+		scanDir := m.deepScanDir
+		if scanDir == "" {
+			scanDir = "…"
+		}
+		statusParts = append(statusParts, fmt.Sprintf("scanning: %s/ ◐", scanDir))
+	}
+
+	if len(statusParts) > 0 {
+		status := " " + strings.Join(statusParts, " · ") + fmt.Sprintf(" · %d items", len(t.entries))
 		b.WriteString(scanningStyle.Width(contentWidth).Render(status))
 	} else {
 		var totalSelected int64
-		for p := range m.selected {
-			for _, e := range m.entries {
+		for p := range t.selected {
+			for _, e := range t.entries {
 				if e.Path == p {
 					totalSelected += e.Size
 					break
 				}
 			}
 		}
-		status := fmt.Sprintf(" %d items", len(m.entries))
-		if m.filterText != "" && m.mode != modeFilter {
-			status = fmt.Sprintf(" %d of %d items · filter: \"%s\"", len(m.entries), len(m.allEntries), m.filterText)
+		status := fmt.Sprintf(" %d items", len(t.entries))
+		if t.filterText != "" && m.mode != modeFilter {
+			status = fmt.Sprintf(" %d of %d items · filter: \"%s\"", len(t.entries), len(t.allEntries), t.filterText)
 		}
-		if len(m.selected) > 0 {
-			status += fmt.Sprintf(" · %d selected · %s", len(m.selected), formatSize(totalSelected))
+		if len(t.selected) > 0 {
+			status += fmt.Sprintf(" · %d selected · %s", len(t.selected), formatSize(totalSelected))
 		}
 		// Mode indicators
 		if !m.showHidden {
@@ -427,11 +504,12 @@ func (m model) View() string {
 
 // viewDryRun renders the dry-run preview overlay.
 func (m model) viewDryRun(b *strings.Builder, contentWidth int) string {
+	t := m.tab()
 	b.WriteString(dryRunHeaderStyle.Render("  Dry-run preview — items to be deleted:"))
 	b.WriteString("\n")
 	b.WriteString("\n")
 
-	usedLines := 11 // logo(4) + path + sep + error(maybe) + header + blank + help + status
+	usedLines := 12 // logo(4) + path + tabbar + sep + error(maybe) + header + blank + help + status
 	visibleRows := m.height - usedLines
 	if visibleRows < 1 {
 		visibleRows = 1
@@ -439,8 +517,8 @@ func (m model) viewDryRun(b *strings.Builder, contentWidth int) string {
 
 	count := 0
 	var totalSize int64
-	for p := range m.selected {
-		for _, e := range m.allEntries {
+	for p := range t.selected {
+		for _, e := range t.allEntries {
 			if e.Path == p {
 				if count < visibleRows {
 					line := fmt.Sprintf("  %9s  %s", formatSize(e.Size), e.Path)
@@ -483,6 +561,80 @@ func (m model) viewDryRun(b *strings.Builder, contentWidth int) string {
 
 	// Status (empty)
 	b.WriteString(statusBarStyle.Width(contentWidth).Render(" dry-run preview"))
+
+	return b.String()
+}
+
+// viewHelp renders the full help overlay.
+func (m model) viewHelp(b *strings.Builder, contentWidth int) string {
+	lines := []string{
+		"",
+		"  NAVIGATION",
+		"    j / ↓        move cursor down",
+		"    k / ↑        move cursor up",
+		"    g            jump to top",
+		"    G            jump to bottom",
+		"    enter        enter directory (BROWSE tab)",
+		"    backspace    go to parent directory",
+		"    esc          go to parent directory",
+		"    shift-tab    switch tab (BROWSE / LARGEST)",
+		"",
+		"  SELECTION & DELETION",
+		"    s            toggle select on cursor item",
+		"    S            range select from last select to cursor",
+		"    d            delete selected (or cursor item)",
+		"    e            dry-run preview of selected items",
+		"    tab          toggle trash / permanent delete mode",
+		"    y / n        confirm / cancel deletion",
+		"",
+		"  DISPLAY",
+		"    f            open filter prompt (type to filter, enter to apply, esc to clear)",
+		"    h            toggle hidden files",
+		"    t            cycle sort mode: size / name / updated / created (BROWSE tab)",
+		"    space        Quick Look preview (macOS)",
+		"",
+		"  OTHER",
+		"    ?            show this help",
+		"    q / ctrl+c   quit",
+		"",
+		"  FLAGS",
+		"    -n N         max items in LARGEST tab (default: 1000)",
+		"    [paths...]   one or more directories to scan",
+	}
+
+	usedLines := 10 // logo(4) + path + tabbar + sep + header-placeholder + help + status
+	visibleRows := m.height - usedLines
+	if visibleRows < 1 {
+		visibleRows = 1
+	}
+
+	for i, line := range lines {
+		if i >= visibleRows {
+			break
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+
+	// Pad remaining
+	rendered := len(lines)
+	if rendered > visibleRows {
+		rendered = visibleRows
+	}
+	for i := rendered; i < visibleRows; i++ {
+		b.WriteString("\n")
+	}
+
+	// Separator
+	b.WriteString(lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", contentWidth)))
+	b.WriteString("\n")
+
+	// Help line
+	b.WriteString(helpDescStyle.Width(contentWidth).Render(fmt.Sprintf(" press any key to close")))
+	b.WriteString("\n")
+
+	// Status
+	b.WriteString(statusBarStyle.Width(contentWidth).Render(" help"))
 
 	return b.String()
 }

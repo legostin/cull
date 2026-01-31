@@ -85,10 +85,13 @@ var (
 			Bold(true).
 			Padding(0, 1)
 
-	// Scanning directory name (inline, yellow bold)
+	// Unsized directory name (dim, not yet computed)
+	dirUnsizedStyle = lipgloss.NewStyle().
+			Foreground(colorDim)
+
+	// Currently scanning directory name (dark yellow)
 	scanningNameStyle = lipgloss.NewStyle().
-				Foreground(colorYellow).
-				Bold(true)
+				Foreground(lipgloss.Color("#b8962e"))
 
 	// Scanning indicator
 	scanningStyle = lipgloss.NewStyle().
@@ -123,4 +126,18 @@ var (
 				Bold(true).
 				Foreground(colorRed).
 				Padding(0, 1)
+
+	// Tab bar — active tab
+	tabActiveStyle = lipgloss.NewStyle().
+			Foreground(colorYellow).
+			Bold(true)
+
+	// Tab bar — inactive tab
+	tabInactiveStyle = lipgloss.NewStyle().
+				Foreground(colorDim)
+
+	// Dupe group header
+	dupeHeaderStyle = lipgloss.NewStyle().
+			Foreground(colorDim).
+			Bold(true)
 )

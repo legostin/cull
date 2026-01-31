@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,7 +10,9 @@ import (
 )
 
 func main() {
-	args := os.Args[1:]
+	topN := flag.Int("n", 1000, "max items in LARGEST tab")
+	flag.Parse()
+	args := flag.Args()
 
 	if len(args) == 0 {
 		args = []string{"."}
@@ -28,9 +31,9 @@ func main() {
 
 	var m tea.Model
 	if len(absPaths) == 1 {
-		m = newModel(absPaths[0])
+		m = newModel(absPaths[0], *topN)
 	} else {
-		m = newMultiRootModel(absPaths)
+		m = newMultiRootModel(absPaths, *topN)
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())

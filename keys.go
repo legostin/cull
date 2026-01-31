@@ -22,6 +22,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleDryRunKey(msg)
 	}
 
+	if m.mode == modeHelp {
+		m.mode = modeNormal
+		return m, nil
+	}
+
 	// q quits in normal and confirm modes
 	if msg.String() == "q" {
 		return m, tea.Quit
@@ -31,95 +36,112 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleConfirmKey(msg)
 	}
 
+	t := m.tab()
+
 	switch msg.String() {
+	case "shift+tab":
+		m.activeTab = (m.activeTab + 1) % 2
+		cmd := m.resetNameScroll()
+		return m, cmd
+
 	case "j", "down":
-		if m.cursor < len(m.entries)-1 {
-			m.cursor++
+		if t.cursor < len(t.entries)-1 {
+			t.cursor++
 		}
 		m.clampOffset()
 		cmd := m.resetNameScroll()
 		return m, cmd
 
 	case "k", "up":
-		if m.cursor > 0 {
-			m.cursor--
+		if t.cursor > 0 {
+			t.cursor--
 		}
 		m.clampOffset()
 		cmd := m.resetNameScroll()
 		return m, cmd
 
 	case "g":
-		m.cursor = 0
+		t.cursor = 0
 		m.clampOffset()
 		cmd := m.resetNameScroll()
 		return m, cmd
 
 	case "G":
-		if len(m.entries) > 0 {
-			m.cursor = len(m.entries) - 1
+		if len(t.entries) > 0 {
+			t.cursor = len(t.entries) - 1
 		}
 		m.clampOffset()
 		cmd := m.resetNameScroll()
 		return m, cmd
 
 	case "enter":
-		if m.cursor < len(m.entries) && m.entries[m.cursor].IsParent {
+		// Only navigate in browse tab
+		if m.activeTab != tabBrowse {
+			return m, nil
+		}
+		if t.cursor < len(t.entries) && t.entries[t.cursor].IsParent {
 			return m.navigateUp()
 		}
-		if m.cursor < len(m.entries) && m.entries[m.cursor].IsDir {
-			return m.navigateInto(m.entries[m.cursor].Path)
+		if t.cursor < len(t.entries) && t.entries[t.cursor].IsDir {
+			return m.navigateInto(t.entries[t.cursor].Path)
 		}
 
 	case "backspace":
+		if m.activeTab != tabBrowse {
+			return m, nil
+		}
 		return m.navigateUp()
 
 	case "esc":
+		if m.activeTab != tabBrowse {
+			return m, nil
+		}
 		return m.navigateUp()
 
 	case "s":
-		if m.cursor < len(m.entries) && !m.entries[m.cursor].IsParent {
-			p := m.entries[m.cursor].Path
-			if m.selected[p] {
-				delete(m.selected, p)
+		if t.cursor < len(t.entries) && !t.entries[t.cursor].IsParent {
+			p := t.entries[t.cursor].Path
+			if t.selected[p] {
+				delete(t.selected, p)
 			} else {
-				m.selected[p] = true
+				t.selected[p] = true
 			}
-			m.lastSelect = m.cursor
+			t.lastSelect = t.cursor
 		}
 
 	case "S":
-		if m.cursor < len(m.entries) {
-			start := m.lastSelect
+		if t.cursor < len(t.entries) {
+			start := t.lastSelect
 			if start < 0 {
 				start = 0
 			}
-			lo, hi := start, m.cursor
+			lo, hi := start, t.cursor
 			if lo > hi {
 				lo, hi = hi, lo
 			}
 			for i := lo; i <= hi; i++ {
-				if !m.entries[i].IsParent {
-					m.selected[m.entries[i].Path] = true
+				if !t.entries[i].IsParent {
+					t.selected[t.entries[i].Path] = true
 				}
 			}
-			m.lastSelect = m.cursor
+			t.lastSelect = t.cursor
 		}
 
 	case "d":
-		if len(m.entries) == 0 {
+		if len(t.entries) == 0 {
 			return m, nil
 		}
-		if len(m.selected) == 0 && m.cursor < len(m.entries) && !m.entries[m.cursor].IsParent {
-			m.selected[m.entries[m.cursor].Path] = true
+		if len(t.selected) == 0 && t.cursor < len(t.entries) && !t.entries[t.cursor].IsParent {
+			t.selected[t.entries[t.cursor].Path] = true
 		}
-		if len(m.selected) == 0 {
+		if len(t.selected) == 0 {
 			return m, nil
 		}
 		m.mode = modeConfirm
 
 	case " ":
-		if m.cursor < len(m.entries) && !m.entries[m.cursor].IsParent {
-			cmd := exec.Command("qlmanage", "-p", m.entries[m.cursor].Path)
+		if t.cursor < len(t.entries) && !t.entries[t.cursor].IsParent {
+			cmd := exec.Command("qlmanage", "-p", t.entries[t.cursor].Path)
 			cmd.Stdout = nil
 			cmd.Stderr = nil
 			cmd.Start()
@@ -131,16 +153,20 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "h":
 		m.showHidden = !m.showHidden
 		m.applyFilter()
-		if m.cursor >= len(m.entries) && len(m.entries) > 0 {
-			m.cursor = len(m.entries) - 1
+		if t.cursor >= len(t.entries) && len(t.entries) > 0 {
+			t.cursor = len(t.entries) - 1
 		}
-		if len(m.entries) == 0 {
-			m.cursor = 0
+		if len(t.entries) == 0 {
+			t.cursor = 0
 		}
 		m.clampOffset()
 
 	case "t":
 		// Cycle sort mode: size -> name -> updated -> created -> size
+		// Only in browse tab
+		if m.activeTab != tabBrowse {
+			return m, nil
+		}
 		switch m.sortBy {
 		case sortSizeDesc:
 			m.sortBy = sortNameAsc
@@ -153,16 +179,16 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		// Remember cursor position
 		var cursorPath string
-		if m.cursor < len(m.entries) {
-			cursorPath = m.entries[m.cursor].Path
+		if t.cursor < len(t.entries) {
+			cursorPath = t.entries[t.cursor].Path
 		}
-		sortEntries(m.allEntries, m.sortBy)
+		sortEntries(t.allEntries, m.sortBy)
 		m.applyFilter()
 		// Restore cursor
 		if cursorPath != "" {
-			for i, e := range m.entries {
+			for i, e := range t.entries {
 				if e.Path == cursorPath {
-					m.cursor = i
+					t.cursor = i
 					break
 				}
 			}
@@ -181,12 +207,15 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "e":
 		// Dry-run preview
-		if len(m.selected) == 0 && m.cursor < len(m.entries) && !m.entries[m.cursor].IsParent {
-			m.selected[m.entries[m.cursor].Path] = true
+		if len(t.selected) == 0 && t.cursor < len(t.entries) && !t.entries[t.cursor].IsParent {
+			t.selected[t.entries[t.cursor].Path] = true
 		}
-		if len(m.selected) > 0 {
+		if len(t.selected) > 0 {
 			m.mode = modeDryRun
 		}
+
+	case "?":
+		m.mode = modeHelp
 	}
 
 	return m, nil
@@ -195,8 +224,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y":
-		paths := make([]string, 0, len(m.selected))
-		for p := range m.selected {
+		t := m.tab()
+		paths := make([]string, 0, len(t.selected))
+		for p := range t.selected {
 			paths = append(paths, p)
 		}
 		useTrash := m.deleteType == deleteTrash
@@ -225,32 +255,33 @@ func (m model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	t := m.tab()
 	switch msg.String() {
 	case "enter":
 		m.mode = modeNormal
 	case "esc":
-		m.filterText = ""
+		t.filterText = ""
 		m.applyFilter()
-		m.cursor = 0
-		m.offset = 0
+		t.cursor = 0
+		t.offset = 0
 		m.mode = modeNormal
 	case "backspace":
-		if len(m.filterText) > 0 {
-			_, size := utf8.DecodeLastRuneInString(m.filterText)
-			m.filterText = m.filterText[:len(m.filterText)-size]
+		if len(t.filterText) > 0 {
+			_, size := utf8.DecodeLastRuneInString(t.filterText)
+			t.filterText = t.filterText[:len(t.filterText)-size]
 			m.applyFilter()
-			if m.cursor >= len(m.entries) && len(m.entries) > 0 {
-				m.cursor = len(m.entries) - 1
+			if t.cursor >= len(t.entries) && len(t.entries) > 0 {
+				t.cursor = len(t.entries) - 1
 			}
 			m.clampOffset()
 		}
 	default:
 		r := msg.Runes
 		if len(r) > 0 {
-			m.filterText += string(r)
+			t.filterText += string(r)
 			m.applyFilter()
-			if m.cursor >= len(m.entries) && len(m.entries) > 0 {
-				m.cursor = len(m.entries) - 1
+			if t.cursor >= len(t.entries) && len(t.entries) > 0 {
+				t.cursor = len(t.entries) - 1
 			}
 			m.clampOffset()
 		}

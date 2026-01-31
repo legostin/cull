@@ -9,12 +9,14 @@ import (
 )
 
 // nameScrollTickMsg fires periodically to advance the marquee.
-type nameScrollTickMsg struct{}
+type nameScrollTickMsg struct {
+	gen int // generation counter to detect stale tick chains
+}
 
 // nameScrollTickCmd returns a command that fires after the marquee interval.
-func nameScrollTickCmd() tea.Cmd {
+func nameScrollTickCmd(gen int) tea.Cmd {
 	return tea.Tick(150*time.Millisecond, func(time.Time) tea.Msg {
-		return nameScrollTickMsg{}
+		return nameScrollTickMsg{gen: gen}
 	})
 }
 
@@ -25,6 +27,7 @@ const (
 	modeConfirm
 	modeFilter
 	modeDryRun
+	modeHelp
 )
 
 type sortMode int
@@ -54,21 +57,45 @@ type deleteErrMsg struct {
 	deleted []string // paths that were successfully deleted before the error
 }
 
-type model struct {
-	path       string
-	allEntries []Entry // full unfiltered list
-	entries    []Entry // filtered view (what cursor navigates)
-	cursor     int
-	offset     int             // scroll offset for viewport
-	selected   map[string]bool // paths of selected entries
-	lastSelect int             // last toggled index for range-select
-	mode       mode
-	width      int
-	height     int
-	errMsg     string
+type tabID int
 
-	// Filter state
+const (
+	tabBrowse  tabID = iota
+	tabLargest
+)
+
+type tabState struct {
+	allEntries []Entry
+	entries    []Entry
+	cursor     int
+	offset     int
+	selected   map[string]bool
+	lastSelect int
 	filterText string
+}
+
+func newTabState() tabState {
+	return tabState{
+		selected:   make(map[string]bool),
+		lastSelect: -1,
+	}
+}
+
+// dirCacheEntry holds cached browse and deep scan results for a directory.
+type dirCacheEntry struct {
+	browseEntries  []Entry
+	largestEntries []Entry // nil if deep scan never completed for this dir
+	deepScanDone   bool
+}
+
+type model struct {
+	path      string
+	activeTab tabID
+	tabs      [2]tabState
+	mode      mode
+	width     int
+	height    int
+	errMsg    string
 
 	// Hidden files toggle
 	showHidden bool
@@ -82,49 +109,64 @@ type model struct {
 	// Disk free space (bytes) for the filesystem containing path
 	diskFree uint64
 
-	// Progressive scanning state
-	scanning    bool
-	scanQueue   []string
-	scanningDir string
-	dirsTotal   int
-	dirsDone    int
+	// Deep scan state
+	deepScanning bool
+	deepScanDone bool
+	deepScanCh   chan deepScanMsg
+	deepScanDir  string // currently scanned directory name for status bar
+	topN         int
+
+	// Path interner
+	interner *PathInterner
 
 	// Cache: directory path -> scanned entries
-	cache map[string][]Entry
+	cache map[string]dirCacheEntry
 
 	// Name column marquee scroll state
 	nameScroll     int    // tick counter for marquee animation
 	nameScrollPath string // path of entry being scrolled (reset on cursor change)
+	nameScrollGen  int    // generation counter; incremented by resetNameScroll
 
 	// Multi-root support
 	rootPaths     []string
 	isVirtualRoot bool
 }
 
-func newModel(path string) model {
-	return model{
+// tab returns a pointer to the current tab's state.
+func (m *model) tab() *tabState {
+	return &m.tabs[m.activeTab]
+}
+
+func newModel(path string, topN int) model {
+	m := model{
 		path:       path,
-		selected:   make(map[string]bool),
-		lastSelect: -1,
-		scanning:   true,
 		showHidden: true,
 		sortBy:     sortSizeDesc,
 		deleteType: deleteTrash,
-		cache:      make(map[string][]Entry),
+		cache:      make(map[string]dirCacheEntry),
+		topN:       topN,
+		interner:   NewPathInterner(),
 	}
+	for i := range m.tabs {
+		m.tabs[i] = newTabState()
+	}
+	return m
 }
 
-func newMultiRootModel(paths []string) model {
+func newMultiRootModel(paths []string, topN int) model {
 	m := model{
 		path:          "/ (multiple roots)",
-		selected:      make(map[string]bool),
-		lastSelect:    -1,
 		showHidden:    true,
 		sortBy:        sortSizeDesc,
 		deleteType:    deleteTrash,
-		cache:         make(map[string][]Entry),
+		cache:         make(map[string]dirCacheEntry),
 		rootPaths:     paths,
 		isVirtualRoot: true,
+		topN:          topN,
+		interner:      NewPathInterner(),
+	}
+	for i := range m.tabs {
+		m.tabs[i] = newTabState()
 	}
 	// Build virtual root entries
 	entries := make([]Entry, 0, len(paths))
@@ -135,16 +177,32 @@ func newMultiRootModel(paths []string) model {
 			IsDir: true,
 		})
 	}
-	m.allEntries = entries
-	m.entries = entries
+	m.tabs[tabBrowse].allEntries = entries
+	m.tabs[tabBrowse].entries = entries
 	return m
 }
 
-// applyFilter rebuilds entries from allEntries based on filterText and showHidden.
+// internEntries populates DirID on each entry using the model's path interner.
+func (m *model) internEntries(entries []Entry) {
+	for i := range entries {
+		if entries[i].Path != "" {
+			dir := filepath.Dir(entries[i].Path)
+			entries[i].DirID = m.interner.Intern(dir)
+		}
+	}
+}
+
+// applyFilter rebuilds entries for the current tab.
 func (m *model) applyFilter() {
-	lower := strings.ToLower(m.filterText)
-	filtered := make([]Entry, 0, len(m.allEntries))
-	for _, e := range m.allEntries {
+	m.applyFilterForTab(m.activeTab)
+}
+
+// applyFilterForTab rebuilds entries from allEntries based on filterText and showHidden for a specific tab.
+func (m *model) applyFilterForTab(t tabID) {
+	tab := &m.tabs[t]
+	lower := strings.ToLower(tab.filterText)
+	filtered := make([]Entry, 0, len(tab.allEntries))
+	for _, e := range tab.allEntries {
 		// Always include parent entry
 		if e.IsParent {
 			filtered = append(filtered, e)
@@ -155,28 +213,29 @@ func (m *model) applyFilter() {
 			continue
 		}
 		// Text filter
-		if m.filterText != "" && !strings.Contains(strings.ToLower(e.Name), lower) {
+		if tab.filterText != "" && !strings.Contains(strings.ToLower(e.Name), lower) {
 			continue
 		}
 		filtered = append(filtered, e)
 	}
-	m.entries = filtered
+	tab.entries = filtered
 }
 
-// clampOffset adjusts m.offset so the cursor stays within the visible viewport.
+// clampOffset adjusts offset so the cursor stays within the visible viewport.
 func (m *model) clampOffset() {
-	visibleRows := m.height - 9
+	visibleRows := m.height - 11 // logo(4) + path + tabbar + sep + header + sep + help + status
 	if m.mode == modeConfirm {
 		visibleRows -= 2
 	}
 	if visibleRows < 1 {
 		visibleRows = 1
 	}
-	if m.cursor < m.offset {
-		m.offset = m.cursor
+	t := m.tab()
+	if t.cursor < t.offset {
+		t.offset = t.cursor
 	}
-	if m.cursor >= m.offset+visibleRows {
-		m.offset = m.cursor - visibleRows + 1
+	if t.cursor >= t.offset+visibleRows {
+		t.offset = t.cursor - visibleRows + 1
 	}
 }
 
@@ -195,61 +254,80 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case quickScanDoneMsg:
-		m.allEntries = msg.entries
+		bt := &m.tabs[tabBrowse]
+		bt.allEntries = msg.entries
+		m.internEntries(bt.allEntries)
 		m.path = msg.path
-		m.cursor = 0
-		m.offset = 0
+		bt.cursor = 0
+		bt.offset = 0
 		m.errMsg = ""
 		m.diskFree = diskFreeSpace(msg.path)
-		sortEntries(m.allEntries, m.sortBy)
-		m.applyFilter()
-		m.cache[msg.path] = m.allEntries
+		sortEntries(bt.allEntries, m.sortBy)
+		m.applyFilterForTab(tabBrowse)
+		// Update cache, preserving existing deep scan results
+		ce := m.cache[msg.path]
+		ce.browseEntries = bt.allEntries
+		m.cache[msg.path] = ce
 		scrollCmd := m.resetNameScroll()
-		mdl, sizeCmd := m.startSizingUnsized()
-		return mdl, tea.Batch(sizeCmd, scrollCmd)
 
-	case dirSizeStartMsg:
-		m.scanningDir = filepath.Base(msg.path)
-		return m, nil
-
-	case dirSizeResultMsg:
-		// Cache the sub-entries for the sized directory
-		if msg.subEntries != nil {
-			m.cache[msg.path] = msg.subEntries
+		// Check if deep scan results are already cached
+		if ce.deepScanDone {
+			lt := &m.tabs[tabLargest]
+			lt.allEntries = ce.largestEntries
+			m.internEntries(lt.allEntries)
+			m.applyFilterForTab(tabLargest)
+			m.deepScanDone = true
+			m.deepScanning = false
+			m.deepScanCh = nil
+			return m, scrollCmd
 		}
 
-		// Check if this result is for current directory's entries (not stale)
-		found := false
-		for _, e := range m.allEntries {
-			if e.Path == msg.path {
-				found = true
-				break
-			}
+		// Reset deep scan results when navigating
+		m.deepScanDone = false
+		m.tabs[tabLargest] = newTabState()
+		// Start unified deep scan
+		var deepCmd tea.Cmd
+		if !m.isVirtualRoot {
+			unsizedDirs := m.collectUnsizedDirs()
+			m.deepScanning = true
+			m.deepScanCh = startDeepScan(msg.path, m.topN, unsizedDirs)
+			deepCmd = pollDeepScanCmd(msg.path, m.deepScanCh)
 		}
-		if !found {
-			return m, nil
-		}
-
-		m.updateEntrySize(msg.path, msg.size)
-		m.cache[m.path] = m.allEntries
-		m.dirsDone++
-
-		if len(m.scanQueue) > 0 {
-			next := m.scanQueue[0]
-			m.scanQueue = m.scanQueue[1:]
-			return m, computeDirSizeCmd(next)
-		}
-		return m, func() tea.Msg { return scanCompleteMsg{} }
-
-	case scanCompleteMsg:
-		m.scanning = false
-		m.scanningDir = ""
-		return m, nil
+		return m, tea.Batch(scrollCmd, deepCmd)
 
 	case scanErrMsg:
 		m.errMsg = msg.err.Error()
-		m.scanning = false
 		return m, nil
+
+	case deepScanMsg:
+		if msg.rootPath != m.path {
+			return m, nil // stale result, discard
+		}
+		// Update LARGEST tab
+		lt := &m.tabs[tabLargest]
+		lt.allEntries = msg.entries
+		m.internEntries(lt.allEntries)
+		m.applyFilterForTab(tabLargest)
+
+		// Update BROWSE tab dir sizes
+		m.updateDirSizes(msg.dirSizes)
+
+		// Update status bar directory name
+		m.deepScanDir = msg.scanningDir
+
+		if msg.done {
+			m.deepScanning = false
+			m.deepScanDone = true
+			m.deepScanCh = nil
+			m.deepScanDir = ""
+			// Save deep scan results to cache
+			ce := m.cache[m.path]
+			ce.largestEntries = lt.allEntries
+			ce.deepScanDone = true
+			m.cache[m.path] = ce
+			return m, nil
+		}
+		return m, pollDeepScanCmd(msg.rootPath, m.deepScanCh)
 
 	case deleteDoneMsg:
 		m.removeDeleted(msg.deleted)
@@ -265,7 +343,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case nameScrollTickMsg:
-		return m.handleNameScrollTick()
+		return m.handleNameScrollTick(msg)
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -274,21 +352,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleNameScrollTick advances the marquee animation for the cursor row name.
-func (m model) handleNameScrollTick() (tea.Model, tea.Cmd) {
-	// Check the cursor entry still matches
-	if m.cursor >= len(m.entries) {
-		return m, nil
-	}
-	e := m.entries[m.cursor]
-	if e.Path != m.nameScrollPath {
-		return m, nil
-	}
-
+// entryDisplayName returns the name shown in the view for the given entry and tab.
+func (m model) entryDisplayName(e Entry) string {
 	name := e.Name
 	if e.IsDir {
 		name += "/"
 	}
+	if m.activeTab == tabLargest && e.Path != "" {
+		if rel, err := filepath.Rel(m.path, e.Path); err == nil {
+			name = rel
+		}
+	}
+	return name
+}
+
+// handleNameScrollTick advances the marquee animation for the cursor row name.
+func (m model) handleNameScrollTick(msg nameScrollTickMsg) (tea.Model, tea.Cmd) {
+	// Stale tick chain — let it die
+	if msg.gen != m.nameScrollGen {
+		return m, nil
+	}
+
+	t := m.tab()
+	// Check the cursor entry still matches
+	if t.cursor >= len(t.entries) {
+		return m, nil
+	}
+	e := t.entries[t.cursor]
+	if e.Path != m.nameScrollPath {
+		return m, nil
+	}
+
+	name := m.entryDisplayName(e)
 
 	nameWidth := m.nameColWidth()
 	nameRunes := []rune(name)
@@ -297,8 +392,8 @@ func (m model) handleNameScrollTick() (tea.Model, tea.Cmd) {
 		return m, nil // no scrolling needed
 	}
 
-	const startPause = 7 // ticks to pause at start (~1s)
-	const endPause = 7   // ticks to pause at end
+	const startPause = 7  // ticks to pause at start (~1s)
+	const endPause = 13   // ticks to pause at end (~2s at 150ms/tick)
 
 	m.nameScroll++
 	total := startPause + maxOffset + endPause
@@ -306,7 +401,7 @@ func (m model) handleNameScrollTick() (tea.Model, tea.Cmd) {
 		m.nameScroll = 0
 	}
 
-	return m, nameScrollTickCmd()
+	return m, nameScrollTickCmd(msg.gen)
 }
 
 // nameColWidth returns the name column width based on current terminal width.
@@ -351,76 +446,132 @@ func (m model) nameScrollOffset(nameRuneLen, nameWidth int) int {
 // resetNameScroll resets marquee state and starts ticking if needed.
 func (m *model) resetNameScroll() tea.Cmd {
 	m.nameScroll = 0
+	m.nameScrollGen++
+	t := m.tab()
 
-	if m.cursor >= len(m.entries) {
+	if t.cursor >= len(t.entries) {
 		m.nameScrollPath = ""
 		return nil
 	}
-	e := m.entries[m.cursor]
+	e := t.entries[t.cursor]
 	m.nameScrollPath = e.Path
 
-	name := e.Name
-	if e.IsDir {
-		name += "/"
-	}
+	name := m.entryDisplayName(e)
 	nameWidth := m.nameColWidth()
 	if len([]rune(name)) > nameWidth {
-		return nameScrollTickCmd()
+		return nameScrollTickCmd(m.nameScrollGen)
 	}
 	return nil
 }
 
-// startSizingUnsized kicks off background sizing for any unsized directory entries.
-func (m model) startSizingUnsized() (tea.Model, tea.Cmd) {
-	m.scanQueue = nil
-	for _, e := range m.allEntries {
-		if e.IsDir && !e.IsParent && !e.Sized {
-			m.scanQueue = append(m.scanQueue, e.Path)
+// cachedDirSize returns the total size of a directory from its cache entry.
+// Returns (size, true) if the directory has a completed deep scan in cache.
+func (m *model) cachedDirSize(path string) (int64, bool) {
+	ce, ok := m.cache[path]
+	if !ok || !ce.deepScanDone {
+		return 0, false
+	}
+	var total int64
+	for _, e := range ce.browseEntries {
+		if !e.IsParent {
+			total += e.Size
 		}
 	}
-	m.dirsTotal = len(m.scanQueue)
-	m.dirsDone = 0
+	return total, true
+}
 
-	if len(m.scanQueue) > 0 {
-		m.scanning = true
-		m.scanningDir = ""
-		next := m.scanQueue[0]
-		m.scanQueue = m.scanQueue[1:]
-		return m, computeDirSizeCmd(next)
+// collectUnsizedDirs returns paths of unsized directory entries in the BROWSE tab.
+func (m *model) collectUnsizedDirs() []string {
+	bt := &m.tabs[tabBrowse]
+	var dirs []string
+	for _, e := range bt.allEntries {
+		if e.IsDir && !e.IsParent && !e.Sized {
+			dirs = append(dirs, e.Path)
+		}
 	}
-	m.scanning = false
-	m.scanningDir = ""
-	return m, nil
+	return dirs
+}
+
+// updateDirSizes updates BROWSE tab directory sizes from the deep scan accumulator.
+func (m *model) updateDirSizes(sizes map[string]int64) {
+	if len(sizes) == 0 {
+		return
+	}
+
+	bt := &m.tabs[tabBrowse]
+
+	// Remember what the cursor points to
+	var cursorPath string
+	if bt.cursor < len(bt.entries) {
+		cursorPath = bt.entries[bt.cursor].Path
+	}
+
+	changed := false
+	for i := range bt.allEntries {
+		e := &bt.allEntries[i]
+		if e.IsDir && !e.IsParent {
+			if sz, ok := sizes[e.Path]; ok {
+				e.Size = sz
+				e.Sized = true
+				changed = true
+			}
+		}
+	}
+
+	if !changed {
+		return
+	}
+
+	// Re-sort and reapply filter
+	sortEntries(bt.allEntries, m.sortBy)
+	m.applyFilterForTab(tabBrowse)
+
+	// Restore cursor to the same entry
+	if cursorPath != "" {
+		for i, e := range bt.entries {
+			if e.Path == cursorPath {
+				bt.cursor = i
+				break
+			}
+		}
+	}
+	m.clampOffset()
+
+	// Update cache
+	ce := m.cache[m.path]
+	ce.browseEntries = bt.allEntries
+	m.cache[m.path] = ce
 }
 
 // updateEntrySize updates a directory entry's size and re-sorts with stable cursor.
 func (m *model) updateEntrySize(path string, size int64) {
+	bt := &m.tabs[tabBrowse]
 	// Remember what the cursor points to
 	var cursorPath string
-	if m.cursor < len(m.entries) {
-		cursorPath = m.entries[m.cursor].Path
+	if bt.cursor < len(bt.entries) {
+		cursorPath = bt.entries[bt.cursor].Path
 	}
 
 	// Update the size in allEntries
-	for i := range m.allEntries {
-		if m.allEntries[i].Path == path {
-			m.allEntries[i].Size = size
-			m.allEntries[i].Sized = true
+	for i := range bt.allEntries {
+		if bt.allEntries[i].Path == path {
+			bt.allEntries[i].Size = size
+			bt.allEntries[i].Sized = true
 			break
 		}
 	}
 
 	// Re-sort allEntries using current sort mode
-	sortEntries(m.allEntries, m.sortBy)
+	sortEntries(bt.allEntries, m.sortBy)
 
 	// Reapply filter to rebuild entries from sorted allEntries
-	m.applyFilter()
+	m.applyFilterForTab(tabBrowse)
 
 	// Restore cursor to the same entry
 	if cursorPath != "" {
-		for i, e := range m.entries {
+		for i, e := range bt.entries {
 			if e.Path == cursorPath {
-				m.cursor = i
+				bt.cursor = i
 				break
 			}
 		}
@@ -428,66 +579,94 @@ func (m *model) updateEntrySize(path string, size int64) {
 	m.clampOffset()
 }
 
-// removeDeleted removes deleted paths from entries and selection, fixes cursor.
+// removeDeleted removes deleted paths from entries and selection across all tabs, fixes cursor.
 func (m *model) removeDeleted(paths []string) {
 	deletedSet := make(map[string]bool, len(paths))
 	for _, p := range paths {
 		deletedSet[p] = true
-		delete(m.selected, p)
 	}
 
-	filtered := make([]Entry, 0, len(m.allEntries))
-	for _, e := range m.allEntries {
-		if !deletedSet[e.Path] {
-			filtered = append(filtered, e)
+	for ti := range m.tabs {
+		t := &m.tabs[ti]
+		for p := range deletedSet {
+			delete(t.selected, p)
+		}
+
+		filtered := make([]Entry, 0, len(t.allEntries))
+		for _, e := range t.allEntries {
+			if !deletedSet[e.Path] {
+				filtered = append(filtered, e)
+			}
+		}
+		t.allEntries = filtered
+		m.applyFilterForTab(tabID(ti))
+		t.lastSelect = -1
+
+		if t.cursor >= len(t.entries) && len(t.entries) > 0 {
+			t.cursor = len(t.entries) - 1
+		}
+		if len(t.entries) == 0 {
+			t.cursor = 0
 		}
 	}
-	m.allEntries = filtered
-	m.applyFilter()
-	m.lastSelect = -1
 
 	// Invalidate cache for current dir since contents changed
 	delete(m.cache, m.path)
 
-	if m.cursor >= len(m.entries) && len(m.entries) > 0 {
-		m.cursor = len(m.entries) - 1
-	}
-	if len(m.entries) == 0 {
-		m.cursor = 0
-	}
 	m.clampOffset()
 }
 
 // navigateInto enters a subdirectory, using cache if available.
 func (m model) navigateInto(path string) (tea.Model, tea.Cmd) {
-	m.selected = make(map[string]bool)
-	m.lastSelect = -1
-	m.filterText = ""
+	bt := &m.tabs[tabBrowse]
+	bt.selected = make(map[string]bool)
+	bt.lastSelect = -1
+	bt.filterText = ""
 	m.isVirtualRoot = false
+
+	// Reset non-browse tabs
+	m.deepScanDone = false
+	m.deepScanning = false
+	m.deepScanCh = nil
+	m.tabs[tabLargest] = newTabState()
 
 	// Save current entries to cache before leaving
 	if m.path != "/ (multiple roots)" {
-		m.cache[m.path] = m.allEntries
+		ce := m.cache[m.path]
+		ce.browseEntries = bt.allEntries
+		m.cache[m.path] = ce
 	}
 
-	if cached, ok := m.cache[path]; ok {
+	if ce, ok := m.cache[path]; ok {
 		m.path = path
-		m.allEntries = cached
+		bt.allEntries = ce.browseEntries
+		m.internEntries(bt.allEntries)
 		m.diskFree = diskFreeSpace(path)
-		sortEntries(m.allEntries, m.sortBy)
-		m.applyFilter()
-		m.cursor = 0
-		m.offset = 0
+		sortEntries(bt.allEntries, m.sortBy)
+		m.applyFilterForTab(tabBrowse)
+		bt.cursor = 0
+		bt.offset = 0
 		m.errMsg = ""
-		return m.startSizingUnsized()
+
+		// If deep scan was completed, restore LARGEST tab from cache
+		if ce.deepScanDone {
+			lt := &m.tabs[tabLargest]
+			lt.allEntries = ce.largestEntries
+			m.internEntries(lt.allEntries)
+			m.applyFilterForTab(tabLargest)
+			m.deepScanDone = true
+			m.deepScanning = false
+			return m, nil
+		}
+
+		// Otherwise start deep scan for unsized dirs only
+		unsizedDirs := m.collectUnsizedDirs()
+		m.deepScanning = true
+		m.deepScanCh = startDeepScan(path, m.topN, unsizedDirs)
+		return m, pollDeepScanCmd(path, m.deepScanCh)
 	}
 
 	// No cache — quick scan
-	m.scanning = true
-	m.scanQueue = nil
-	m.scanningDir = ""
-	m.dirsTotal = 0
-	m.dirsDone = 0
 	return m, quickScanCmd(path)
 }
 
@@ -512,64 +691,106 @@ func (m model) navigateUp() (tea.Model, tea.Cmd) {
 	}
 
 	prevDir := m.path
+	bt := &m.tabs[tabBrowse]
 
-	m.selected = make(map[string]bool)
-	m.lastSelect = -1
-	m.filterText = ""
+	bt.selected = make(map[string]bool)
+	bt.lastSelect = -1
+	bt.filterText = ""
+
+	// Reset non-browse tabs
+	m.deepScanDone = false
+	m.deepScanning = false
+	m.deepScanCh = nil
+	m.tabs[tabLargest] = newTabState()
 
 	// Save current entries to cache before leaving
-	m.cache[m.path] = m.allEntries
+	ce := m.cache[m.path]
+	ce.browseEntries = bt.allEntries
+	m.cache[m.path] = ce
 
-	if cached, ok := m.cache[parent]; ok {
+	if ce, ok := m.cache[parent]; ok {
 		m.path = parent
-		m.allEntries = cached
+		bt.allEntries = ce.browseEntries
 		m.diskFree = diskFreeSpace(parent)
 		m.errMsg = ""
 
-		// Mark the directory we came from as unsized so it gets re-indexed
-		for i := range m.allEntries {
-			if m.allEntries[i].Path == prevDir {
-				m.allEntries[i].Sized = false
-				break
+		// Try to compute prevDir size from its own cache instead of re-scanning
+		if sz, ok := m.cachedDirSize(prevDir); ok {
+			for i := range bt.allEntries {
+				if bt.allEntries[i].Path == prevDir {
+					bt.allEntries[i].Size = sz
+					bt.allEntries[i].Sized = true
+					break
+				}
+			}
+		} else {
+			// Cache invalidated (e.g. deletion) — mark unsized for re-scan
+			for i := range bt.allEntries {
+				if bt.allEntries[i].Path == prevDir {
+					bt.allEntries[i].Sized = false
+					break
+				}
 			}
 		}
-		sortEntries(m.allEntries, m.sortBy)
-		m.applyFilter()
+		sortEntries(bt.allEntries, m.sortBy)
+		m.applyFilterForTab(tabBrowse)
 
 		// Position cursor on the directory we came from
-		m.cursor = 0
-		m.offset = 0
-		for i, e := range m.entries {
+		bt.cursor = 0
+		bt.offset = 0
+		for i, e := range bt.entries {
 			if e.Path == prevDir {
-				m.cursor = i
+				bt.cursor = i
 				break
 			}
 		}
 		m.clampOffset()
 
-		return m.startSizingUnsized()
+		// If deep scan was completed, restore LARGEST tab and only re-scan if needed
+		if ce.deepScanDone {
+			lt := &m.tabs[tabLargest]
+			lt.allEntries = ce.largestEntries
+			m.internEntries(lt.allEntries)
+			m.applyFilterForTab(tabLargest)
+			m.deepScanDone = true
+
+			unsizedDirs := m.collectUnsizedDirs()
+			if len(unsizedDirs) > 0 {
+				m.deepScanning = true
+				m.deepScanCh = startDeepScan(parent, m.topN, unsizedDirs)
+				return m, pollDeepScanCmd(parent, m.deepScanCh)
+			}
+			return m, nil
+		}
+
+		unsizedDirs := m.collectUnsizedDirs()
+		m.deepScanning = true
+		m.deepScanCh = startDeepScan(parent, m.topN, unsizedDirs)
+		return m, pollDeepScanCmd(parent, m.deepScanCh)
 	}
 
 	// No cache — full quick scan
-	m.scanning = true
-	m.scanQueue = nil
-	m.scanningDir = ""
-	m.dirsTotal = 0
-	m.dirsDone = 0
 	return m, quickScanCmd(parent)
 }
 
 // navigateToVirtualRoot returns to the virtual multi-root view.
 func (m model) navigateToVirtualRoot() model {
-	m.cache[m.path] = m.allEntries
-	m.selected = make(map[string]bool)
-	m.lastSelect = -1
-	m.filterText = ""
+	bt := &m.tabs[tabBrowse]
+	ce := m.cache[m.path]
+	ce.browseEntries = bt.allEntries
+	m.cache[m.path] = ce
+	bt.selected = make(map[string]bool)
+	bt.lastSelect = -1
+	bt.filterText = ""
 	m.isVirtualRoot = true
 	m.path = "/ (multiple roots)"
-	m.scanning = false
-	m.scanQueue = nil
-	m.scanningDir = ""
+	m.deepScanning = false
+	m.deepScanDone = false
+	m.deepScanCh = nil
+	m.deepScanDir = ""
+
+	// Reset non-browse tabs
+	m.tabs[tabLargest] = newTabState()
 
 	entries := make([]Entry, 0, len(m.rootPaths))
 	for _, p := range m.rootPaths {
@@ -579,9 +800,9 @@ func (m model) navigateToVirtualRoot() model {
 			IsDir: true,
 		})
 	}
-	m.allEntries = entries
-	m.applyFilter()
-	m.cursor = 0
-	m.offset = 0
+	bt.allEntries = entries
+	m.applyFilterForTab(tabBrowse)
+	bt.cursor = 0
+	bt.offset = 0
 	return m
 }
