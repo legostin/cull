@@ -94,6 +94,26 @@ func nameHeaderLabel(s sortMode) string {
 	return "NAME"
 }
 
+// sizeStyleFor returns the appropriate size style based on file size.
+func sizeStyleFor(bytes int64) lipgloss.Style {
+	const (
+		MB = 1024 * 1024
+		GB = 1024 * MB
+	)
+	switch {
+	case bytes >= 10*GB:
+		return sizeStyle10GB
+	case bytes >= GB:
+		return sizeStyle1GB
+	case bytes >= 100*MB:
+		return sizeStyle100MB
+	case bytes >= 10*MB:
+		return sizeStyle10MB
+	default:
+		return sizeStyle
+	}
+}
+
 // proportionBar renders a right-aligned bar of width barWidth proportional to size/maxSize.
 func proportionBar(size, maxSize int64, barWidth int) string {
 	if maxSize <= 0 || size <= 0 || barWidth <= 0 {
@@ -377,7 +397,7 @@ func (m model) View() string {
 			if pending {
 				size = sizePendingStyle.Render(sizeFormatted)
 			} else {
-				size = sizeStyle.Render(sizeFormatted)
+				size = sizeStyleFor(e.Size).Render(sizeFormatted)
 			}
 
 			created := dateStyle.Render(createdStr)

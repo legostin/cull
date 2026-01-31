@@ -120,6 +120,52 @@ func TestProportionBarPlain(t *testing.T) {
 	}
 }
 
+func TestSizeStyleFor(t *testing.T) {
+	const (
+		MB = 1024 * 1024
+		GB = 1024 * MB
+	)
+	tests := []struct {
+		bytes int64
+		want  string // style identity: check by rendered output difference
+	}{
+		{0, "default"},
+		{5 * MB, "default"},
+		{10 * MB, "10MB"},
+		{50 * MB, "10MB"},
+		{100 * MB, "100MB"},
+		{500 * MB, "100MB"},
+		{GB, "1GB"},
+		{5 * GB, "1GB"},
+		{10 * GB, "10GB"},
+		{100 * GB, "10GB"},
+	}
+
+	// Map style to a label by comparing with known styles
+	styleLabel := func(bytes int64) string {
+		s := sizeStyleFor(bytes)
+		switch {
+		case s.GetForeground() == sizeStyle10GB.GetForeground() && s.GetBold():
+			return "10GB"
+		case s.GetForeground() == sizeStyle1GB.GetForeground():
+			return "1GB"
+		case s.GetForeground() == sizeStyle100MB.GetForeground():
+			return "100MB"
+		case s.GetForeground() == sizeStyle10MB.GetForeground():
+			return "10MB"
+		default:
+			return "default"
+		}
+	}
+
+	for _, tt := range tests {
+		got := styleLabel(tt.bytes)
+		if got != tt.want {
+			t.Errorf("sizeStyleFor(%d) style = %q, want %q", tt.bytes, got, tt.want)
+		}
+	}
+}
+
 func TestHeaderLabels(t *testing.T) {
 	if sizeHeaderLabel(sortSizeDesc) != "SIZE▼" {
 		t.Error("sizeHeaderLabel(sortSizeDesc) should include arrow")

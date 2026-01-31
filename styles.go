@@ -49,9 +49,35 @@ var (
 				Foreground(colorGreen).
 				Bold(true)
 
-	// Size column
+	// Size column — default (< 10 MB)
 	sizeStyle = lipgloss.NewStyle().
 			Foreground(colorDim).
+			Width(9).
+			Align(lipgloss.Right)
+
+	// Size column — 10 MB+
+	sizeStyle10MB = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#88aa44")).
+			Width(9).
+			Align(lipgloss.Right)
+
+	// Size column — 100 MB+
+	sizeStyle100MB = lipgloss.NewStyle().
+			Foreground(colorYellow).
+			Width(9).
+			Align(lipgloss.Right)
+
+	// Size column — 1 GB+
+	sizeStyle1GB = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#ee8833")).
+			Bold(true).
+			Width(9).
+			Align(lipgloss.Right)
+
+	// Size column — 10 GB+
+	sizeStyle10GB = lipgloss.NewStyle().
+			Foreground(colorRed).
+			Bold(true).
 			Width(9).
 			Align(lipgloss.Right)
 
