@@ -17,3 +17,5 @@ Thumbs.db
 *.test
 *.out
 firebase-debug.log
+testdata/
+performance/

@@ -272,9 +272,19 @@ func (h *entryHeap) Pop() interface{} {
 }
 
 // snapshotHeap extracts a sorted (size desc) copy of the heap contents.
-func snapshotHeap(h *entryHeap) []Entry {
+// If fillCreateTime is true, extractBirthTime is called for each entry
+// (deferred from the hot loop to avoid unnecessary syscalls).
+func snapshotHeap(h *entryHeap, fillCreateTime bool) []Entry {
 	entries := make([]Entry, h.Len())
 	copy(entries, *h)
+	if fillCreateTime {
+		for i := range entries {
+			info, err := os.Stat(entries[i].Path)
+			if err == nil {
+				entries[i].CreateTime = extractBirthTime(entries[i].Path, info)
+			}
+		}
+	}
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Size > entries[j].Size
 	})
@@ -291,15 +301,18 @@ func startDeepScan(root string, topN int, firstLevelDirs []string) chan deepScan
 
 	ch := make(chan deepScanMsg, 2)
 
-	// Build set of first-level dir paths for fast prefix matching.
-	// Store with trailing separator for unambiguous prefix checks.
-	type dirPrefix struct {
-		path   string // original path (map key)
-		prefix string // path + separator
-	}
-	prefixes := make([]dirPrefix, 0, len(firstLevelDirs))
+	// Opt 1: Build a map from the first path segment (relative to root) to the
+	// full first-level dir path. This replaces O(dirs) linear search with O(1)
+	// map lookup per file.
+	rootPrefix := root + string(filepath.Separator)
+	segmentToDir := make(map[string]string, len(firstLevelDirs))
 	for _, d := range firstLevelDirs {
-		prefixes = append(prefixes, dirPrefix{path: d, prefix: d + string(filepath.Separator)})
+		rel := strings.TrimPrefix(d, rootPrefix)
+		// First segment is everything before the next separator (or the whole string).
+		if idx := strings.IndexByte(rel, filepath.Separator); idx >= 0 {
+			rel = rel[:idx]
+		}
+		segmentToDir[rel] = d
 	}
 
 	go func() {
@@ -311,6 +324,10 @@ func startDeepScan(root string, topN int, firstLevelDirs []string) chan deepScan
 		dirSizes := make(map[string]int64, len(firstLevelDirs))
 		var scanningDir string
 		fileCount := 0
+
+		// Opt 4: Timer-based snapshots instead of counter-based.
+		const snapshotInterval = 200 * time.Millisecond
+		lastSnapshot := time.Now()
 
 		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
@@ -328,32 +345,44 @@ func startDeepScan(root string, topN int, firstLevelDirs []string) chan deepScan
 			}
 			size := info.Size()
 
-			// Accumulate into the first-level dir this file belongs to
-			for _, dp := range prefixes {
-				if strings.HasPrefix(path, dp.prefix) {
-					dirSizes[dp.path] += size
-					break
+			// Opt 1: Map lookup for first-level dir accumulation.
+			if strings.HasPrefix(path, rootPrefix) {
+				rel := path[len(rootPrefix):]
+				seg := rel
+				if idx := strings.IndexByte(rel, filepath.Separator); idx >= 0 {
+					seg = rel[:idx]
+				}
+				if dirPath, ok := segmentToDir[seg]; ok {
+					dirSizes[dirPath] += size
 				}
 			}
 
-			entry := Entry{
-				Name:       d.Name(),
-				Path:       path,
-				Size:       size,
-				Sized:      true,
-				ModTime:    info.ModTime(),
-				CreateTime: extractBirthTime(path, info),
-			}
-
+			// Opt 3: Only create Entry when the file qualifies for the heap.
 			if h.Len() < topN {
-				heap.Push(h, entry)
+				// Opt 2: CreateTime is deferred — not filled here.
+				heap.Push(h, Entry{
+					Name:    d.Name(),
+					Path:    path,
+					Size:    size,
+					Sized:   true,
+					ModTime: info.ModTime(),
+				})
 			} else if size > (*h)[0].Size {
 				heap.Pop(h)
-				heap.Push(h, entry)
+				heap.Push(h, Entry{
+					Name:    d.Name(),
+					Path:    path,
+					Size:    size,
+					Sized:   true,
+					ModTime: info.ModTime(),
+				})
 			}
 
 			fileCount++
-			if fileCount%5000 == 0 {
+			// Opt 4: Send intermediate snapshots on a timer rather than
+			// every fixed number of files.
+			if now := time.Now(); now.Sub(lastSnapshot) >= snapshotInterval {
+				lastSnapshot = now
 				// Copy dirSizes for snapshot
 				snap := make(map[string]int64, len(dirSizes))
 				for k, v := range dirSizes {
@@ -361,7 +390,7 @@ func startDeepScan(root string, topN int, firstLevelDirs []string) chan deepScan
 				}
 				ch <- deepScanMsg{
 					rootPath:    root,
-					entries:     snapshotHeap(h),
+					entries:     snapshotHeap(h, false),
 					dirSizes:    snap,
 					scanningDir: scanningDir,
 				}
@@ -370,10 +399,10 @@ func startDeepScan(root string, topN int, firstLevelDirs []string) chan deepScan
 			return nil
 		})
 
-		// Final snapshot
+		// Final snapshot — fill CreateTime only for the final top-N entries (Opt 2).
 		ch <- deepScanMsg{
 			rootPath:    root,
-			entries:     snapshotHeap(h),
+			entries:     snapshotHeap(h, true),
 			dirSizes:    dirSizes,
 			scanningDir: "",
 			done:        true,

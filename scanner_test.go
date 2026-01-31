@@ -94,7 +94,7 @@ func TestSnapshotHeap(t *testing.T) {
 	heap.Push(h, Entry{Name: "medium", Size: 100})
 
 	origLen := h.Len()
-	snap := snapshotHeap(h)
+	snap := snapshotHeap(h, false)
 
 	// Should not modify original heap
 	if h.Len() != origLen {
@@ -114,7 +114,7 @@ func TestSnapshotHeap(t *testing.T) {
 func TestSnapshotHeap_Empty(t *testing.T) {
 	h := &entryHeap{}
 	heap.Init(h)
-	snap := snapshotHeap(h)
+	snap := snapshotHeap(h, false)
 	if len(snap) != 0 {
 		t.Errorf("empty heap snapshot len = %d, want 0", len(snap))
 	}
