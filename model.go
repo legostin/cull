@@ -413,8 +413,8 @@ func (m model) nameColWidth() int {
 	} else if contentWidth < 60 {
 		barWidth = 5
 	}
-	// marker(2) + bar + space + size(9) + gap(2) + name + gap(2) + created(10) + gap(2) + updated(10)
-	fixedWidth := 2 + barWidth + 1 + 9 + 2 + 2 + 10 + 2 + 10
+	// marker(2) + bar + space + size(9) + space + pct(4) + gap(2) + name + gap(2) + created(10) + gap(2) + updated(10)
+	fixedWidth := 2 + barWidth + 1 + 9 + 1 + 4 + 2 + 2 + 10 + 2 + 10
 	nameWidth := contentWidth - fixedWidth
 	if nameWidth < 10 {
 		nameWidth = 10

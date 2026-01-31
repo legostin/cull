@@ -94,6 +94,25 @@ func nameHeaderLabel(s sortMode) string {
 	return "NAME"
 }
 
+// formatPercent returns a right-aligned percentage string (4 chars), e.g. " 42%".
+func formatPercent(size, total int64) string {
+	if total <= 0 || size <= 0 {
+		return "    "
+	}
+	pct := float64(size) / float64(total) * 100
+	if pct >= 100 {
+		return "100%"
+	}
+	if pct >= 10 {
+		return fmt.Sprintf("%2.0f%%", pct)
+	}
+	if pct >= 1 {
+		return fmt.Sprintf(" %1.0f%%", pct)
+	}
+	// < 1% but > 0
+	return " <1%"
+}
+
 // sizeStyleFor returns the appropriate size style based on file size.
 func sizeStyleFor(bytes int64) lipgloss.Style {
 	const (
@@ -244,11 +263,14 @@ func (m model) View() string {
 
 	t := m.tab()
 
-	// Compute max size for proportion bar
-	var maxSize int64
+	// Compute max size for proportion bar and total size for percentage
+	var maxSize, totalSize int64
 	for _, e := range t.entries {
-		if !e.IsParent && e.Sized && e.Size > maxSize {
-			maxSize = e.Size
+		if !e.IsParent && e.Sized {
+			totalSize += e.Size
+			if e.Size > maxSize {
+				maxSize = e.Size
+			}
 		}
 	}
 
@@ -265,17 +287,17 @@ func (m model) View() string {
 	// Header
 	switch m.activeTab {
 	case tabBrowse:
-		header := headerStyle.Render(fmt.Sprintf("  %*s %9s  %-*s  %-10s  %-10s",
+		header := headerStyle.Render(fmt.Sprintf("  %*s %9s %4s  %-*s  %-10s  %-10s",
 			barWidth, "",
-			sizeHeaderLabel(m.sortBy),
+			sizeHeaderLabel(m.sortBy), "%",
 			nameWidth, nameHeaderLabel(m.sortBy),
 			createdHeaderLabel(m.sortBy),
 			updatedHeaderLabel(m.sortBy)))
 		b.WriteString(header)
 	case tabLargest:
-		header := headerStyle.Render(fmt.Sprintf("  %*s %9s  %-*s  %-10s  %-10s",
+		header := headerStyle.Render(fmt.Sprintf("  %*s %9s %4s  %-*s  %-10s  %-10s",
 			barWidth, "",
-			"SIZE▼",
+			"SIZE▼", "%",
 			nameWidth, "NAME",
 			"CREATED",
 			"UPDATED"))
@@ -316,11 +338,11 @@ func (m model) View() string {
 		if e.IsParent {
 			pad := strings.Repeat(" ", barWidth)
 			if isCursor {
-				plain := fmt.Sprintf("  %s %9s  %-*s  %10s  %10s", pad, "", nameWidth, "..", "", "")
+				plain := fmt.Sprintf("  %s %9s %4s  %-*s  %10s  %10s", pad, "", "", nameWidth, "..", "", "")
 				row := cursorStyle.Width(contentWidth).Render(plain)
 				b.WriteString(row)
 			} else {
-				b.WriteString(fmt.Sprintf("  %s %9s  %-*s  %10s  %10s", pad, "", nameWidth, dirStyle.Render(".."), "", ""))
+				b.WriteString(fmt.Sprintf("  %s %9s %4s  %-*s  %10s  %10s", pad, "", "", nameWidth, dirStyle.Render(".."), "", ""))
 			}
 			b.WriteString("\n")
 			continue
@@ -385,7 +407,8 @@ func (m model) View() string {
 			} else {
 				plainBar = strings.Repeat(" ", barWidth)
 			}
-			plain := fmt.Sprintf("%s%s %9s  %-*s  %-10s  %-10s", markerText, plainBar, sizeFormatted, nameWidth, dn, createdStr, updatedStr)
+			pctStr := formatPercent(e.Size, totalSize)
+			plain := fmt.Sprintf("%s%s %9s %4s  %-*s  %-10s  %-10s", markerText, plainBar, sizeFormatted, pctStr, nameWidth, dn, createdStr, updatedStr)
 			row = cursorStyle.Width(contentWidth).Render(plain)
 		} else {
 			marker := markerText
@@ -393,11 +416,19 @@ func (m model) View() string {
 				marker = selectedMarkerStyle.Render(markerText)
 			}
 
+			sizeCol := sizeStyleFor(e.Size)
 			var size string
 			if pending {
 				size = sizePendingStyle.Render(sizeFormatted)
 			} else {
-				size = sizeStyleFor(e.Size).Render(sizeFormatted)
+				size = sizeCol.Render(sizeFormatted)
+			}
+
+			var pct string
+			if pending {
+				pct = sizePendingStyle.Width(4).Render("")
+			} else {
+				pct = sizeCol.Width(4).Render(formatPercent(e.Size, totalSize))
 			}
 
 			created := dateStyle.Render(createdStr)
@@ -418,9 +449,9 @@ func (m model) View() string {
 				if namePad < 0 {
 					namePad = 0
 				}
-				row = fmt.Sprintf("%s%s %s  %s%s  %s  %s", marker, bar, size, styledName, strings.Repeat(" ", namePad), created, updated)
+				row = fmt.Sprintf("%s%s %s %s  %s%s  %s  %s", marker, bar, size, pct, styledName, strings.Repeat(" ", namePad), created, updated)
 			} else {
-				row = fmt.Sprintf("%s%s %s  %-*s  %s  %s", marker, bar, size, nameWidth, truncName, created, updated)
+				row = fmt.Sprintf("%s%s %s %s  %-*s  %s  %s", marker, bar, size, pct, nameWidth, truncName, created, updated)
 			}
 		}
 

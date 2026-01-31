@@ -6,6 +6,31 @@ import (
 	"time"
 )
 
+func TestFormatPercent(t *testing.T) {
+	tests := []struct {
+		size, total int64
+		want        string
+	}{
+		{0, 100, "    "},
+		{100, 0, "    "},
+		{0, 0, "    "},
+		{100, 100, "100%"},
+		{50, 100, "50%"},
+		{10, 100, "10%"},
+		{5, 100, " 5%"},
+		{1, 100, " 1%"},
+		{1, 1000, " <1%"},
+		{99, 100, "99%"},
+		{1, 3, "33%"},
+	}
+	for _, tt := range tests {
+		got := formatPercent(tt.size, tt.total)
+		if got != tt.want {
+			t.Errorf("formatPercent(%d, %d) = %q, want %q", tt.size, tt.total, got, tt.want)
+		}
+	}
+}
+
 func TestFormatSize(t *testing.T) {
 	tests := []struct {
 		bytes int64
