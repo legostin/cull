@@ -35,12 +35,11 @@ nfpms:
     formats:
       - deb
 
-homebrew_casks:
-  - name: cull
-    repository:
+brews:
+  - repository:
       owner: legostin
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Casks
+    directory: Formula
     homepage: "https://github.com/legostin/cull"
     description: "Interactive disk space analyzer for macOS and Linux"
