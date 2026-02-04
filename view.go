@@ -3,11 +3,34 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
+
+// gradientWave applies a moving color gradient to text. Non-space characters
+// are colored using the scanGradient palette, with the wave shifted by phase.
+func gradientWave(text string, phase int) string {
+	runes := []rune(text)
+	wl := len(scanGradient)
+	if wl == 0 {
+		return text
+	}
+	var b strings.Builder
+	b.Grow(len(text) * 12) // rough estimate for ANSI overhead
+	for i, r := range runes {
+		if r == ' ' {
+			b.WriteRune(r)
+			continue
+		}
+		idx := ((i + phase) % wl + wl) % wl
+		s := lipgloss.NewStyle().Foreground(scanGradient[idx])
+		b.WriteString(s.Render(string(r)))
+	}
+	return b.String()
+}
 
 // formatDate returns "2025-01-15" for a non-zero time, or 10 spaces for zero.
 func formatDate(t time.Time) string {
@@ -358,11 +381,13 @@ func (m model) View() string {
 		}
 
 		name := e.Name
-		if e.IsDir {
+		if e.IsSymlink {
+			name += " →"
+		} else if e.IsDir {
 			name += "/"
 		}
 
-		isActiveScanning := m.deepScanning && !e.IsParent && e.IsDir && e.Name == m.deepScanDir
+		isActiveScanning := m.deepScanning && !e.IsParent && e.IsDir && m.deepScanDirs[e.Path]
 		isUnsized := !e.IsParent && e.IsDir && !e.Sized
 
 		markerText := "  "
@@ -410,6 +435,48 @@ func (m model) View() string {
 			pctStr := formatPercent(e.Size, totalSize)
 			plain := fmt.Sprintf("%s%s %9s %4s  %-*s  %-10s  %-10s", markerText, plainBar, sizeFormatted, pctStr, nameWidth, dn, createdStr, updatedStr)
 			row = cursorStyle.Width(contentWidth).Render(plain)
+		} else if isActiveScanning {
+			// Gradient wave on bar + size + pct only; name/dates use normal styles
+			var plainBar string
+			if e.Sized {
+				plainBar = proportionBarPlain(e.Size, maxSize, barWidth)
+			} else {
+				plainBar = strings.Repeat(" ", barWidth)
+			}
+			pctStr := formatPercent(e.Size, totalSize)
+			animatedPart := gradientWave(
+				fmt.Sprintf("%s %9s %4s", plainBar, sizeFormatted, pctStr),
+				m.scanAnimPhase,
+			)
+
+			// Name — use standard styles during scan
+			truncName := truncateName(displayName+" ◐", nameWidth)
+			var styledName string
+			if e.IsSymlink {
+				styledName = symlinkStyle.Render(truncName)
+			} else if e.IsDir {
+				nameStyleLocal := dirStyle
+				if isUnsized {
+					nameStyleLocal = dirUnsizedStyle
+				}
+				styledName = nameStyleLocal.Render(truncName)
+			} else {
+				styledName = truncName
+			}
+			namePad := nameWidth - lipgloss.Width(styledName)
+			if namePad < 0 {
+				namePad = 0
+			}
+
+			created := dateStyle.Render(createdStr)
+			updated := dateStyle.Render(updatedStr)
+			marker := markerText
+			if isSelected {
+				marker = selectedMarkerStyle.Render(markerText)
+			}
+
+			row = fmt.Sprintf("%s%s  %s%s  %s  %s",
+				marker, animatedPart, styledName, strings.Repeat(" ", namePad), created, updated)
 		} else {
 			marker := markerText
 			if isSelected {
@@ -437,11 +504,16 @@ func (m model) View() string {
 			// Truncate name for non-cursor rows
 			truncName := truncateName(displayName, nameWidth)
 
-			if e.IsDir {
+			if e.IsSymlink {
+				styledName := symlinkStyle.Render(truncName)
+				namePad := nameWidth - lipgloss.Width(styledName)
+				if namePad < 0 {
+					namePad = 0
+				}
+				row = fmt.Sprintf("%s%s %s %s  %s%s  %s  %s", marker, bar, size, pct, styledName, strings.Repeat(" ", namePad), created, updated)
+			} else if e.IsDir {
 				nameStyleLocal := dirStyle
-				if isActiveScanning {
-					nameStyleLocal = scanningNameStyle
-				} else if isUnsized {
+				if isUnsized {
 					nameStyleLocal = dirUnsizedStyle
 				}
 				styledName := nameStyleLocal.Render(truncName)
@@ -513,11 +585,24 @@ func (m model) View() string {
 	statusParts := []string{}
 
 	if m.deepScanning {
-		scanDir := m.deepScanDir
-		if scanDir == "" {
-			scanDir = "…"
+		if len(m.deepScanDirs) == 0 {
+			statusParts = append(statusParts, "scanning: … ◐")
+		} else {
+			names := make([]string, 0, len(m.deepScanDirs))
+			for p := range m.deepScanDirs {
+				names = append(names, filepath.Base(p)+"/")
+			}
+			sort.Strings(names)
+			label := strings.Join(names, ", ")
+			maxLen := contentWidth - 30 // leave room for item count etc.
+			if maxLen < 20 {
+				maxLen = 20
+			}
+			if len(label) > maxLen {
+				label = label[:maxLen-3] + "..."
+			}
+			statusParts = append(statusParts, fmt.Sprintf("scanning: %s ◐", label))
 		}
-		statusParts = append(statusParts, fmt.Sprintf("scanning: %s/ ◐", scanDir))
 	}
 
 	if len(statusParts) > 0 {
