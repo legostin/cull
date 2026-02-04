@@ -36,6 +36,9 @@ go install github.com/legostin/cull@latest
 ```
 cull                        # scan current directory
 cull ~/Downloads            # scan specific path
+cull --read-only            # browse without deletion
+cull -y                     # skip delete confirmation
+cull -n 5000                # show up to 5000 items in Largest tab
 ```
 
 ## Features
