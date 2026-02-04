@@ -209,6 +209,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case sortCreatedDesc:
 			m.sortBy = sortSizeDesc
 		}
+		// Lazy-fill birth times on platforms where it's not gathered eagerly
+		if m.sortBy == sortCreatedDesc && !eagerBirthTime {
+			fillMissingBirthTimes(t.allEntries)
+		}
 		// Remember cursor position
 		var cursorPath string
 		if t.cursor < len(t.entries) {

@@ -198,7 +198,9 @@ func quickScanDir(path string) ([]Entry, error) {
 			if err == nil {
 				entry.IsDir = targetInfo.IsDir()
 				entry.ModTime = targetInfo.ModTime()
-				entry.CreateTime = extractBirthTime(fullPath, targetInfo)
+				if eagerBirthTime {
+					entry.CreateTime = extractBirthTime(fullPath, targetInfo)
+				}
 			}
 			// Symlinks contribute zero size
 			entry.Size = 0
@@ -211,7 +213,9 @@ func quickScanDir(path string) ([]Entry, error) {
 				if !de.IsDir() {
 					entry.Size = info.Size()
 				}
-				entry.CreateTime = extractBirthTime(fullPath, info)
+				if eagerBirthTime {
+					entry.CreateTime = extractBirthTime(fullPath, info)
+				}
 			}
 			if !de.IsDir() {
 				entry.Sized = true
@@ -239,6 +243,21 @@ func quickScanDir(path string) ([]Entry, error) {
 	saveDirCache(path, entries)
 
 	return entries, nil
+}
+
+// fillMissingBirthTimes populates CreateTime for entries that have a zero value.
+// Used on platforms where birth time is not gathered eagerly during quickScanDir.
+func fillMissingBirthTimes(entries []Entry) {
+	for i := range entries {
+		if entries[i].IsParent || !entries[i].CreateTime.IsZero() {
+			continue
+		}
+		info, err := os.Stat(entries[i].Path)
+		if err != nil {
+			continue
+		}
+		entries[i].CreateTime = extractBirthTime(entries[i].Path, info)
+	}
 }
 
 // quickScanCmd returns a command that does a quick (non-recursive) directory listing.
