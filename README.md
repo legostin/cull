@@ -10,12 +10,22 @@ Interactive TUI disk space analyzer. Scan directories, find what's eating your d
 
 ## Install
 
+### macOS
+
 ```
 brew tap legostin/tap
 brew install cull
 ```
 
-Or build from source:
+### Linux (apt)
+
+```
+echo "deb [trusted=yes] https://legostin.github.io/apt-repo/ /" | sudo tee /etc/apt/sources.list.d/cull.list
+sudo apt update
+sudo apt install cull
+```
+
+### From source
 
 ```
 go install github.com/legostin/cull@latest

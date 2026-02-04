@@ -15,7 +15,8 @@ builds:
       - arm64
 
 archives:
-  - format: tar.gz
+  - formats:
+      - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
@@ -24,11 +25,22 @@ checksum:
 changelog:
   sort: asc
 
-brews:
-  - repository:
+nfpms:
+  - package_name: cull
+    vendor: legostin
+    homepage: https://github.com/legostin/cull
+    maintainer: legostin
+    description: Interactive TUI disk space analyzer
+    license: MIT
+    formats:
+      - deb
+
+homebrew_casks:
+  - name: cull
+    repository:
       owner: legostin
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
+    directory: Casks
     homepage: "https://github.com/legostin/cull"
     description: "Interactive disk space analyzer for macOS and Linux"
