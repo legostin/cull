@@ -11,6 +11,8 @@ import (
 
 func main() {
 	topN := flag.Int("n", 1000, "max items in LARGEST tab")
+	readOnly := flag.Bool("read-only", false, "read-only mode: disable deletion")
+	skipConfirm := flag.Bool("y", false, "skip delete confirmation")
 	flag.Parse()
 	args := flag.Args()
 
@@ -31,9 +33,9 @@ func main() {
 
 	var m tea.Model
 	if len(absPaths) == 1 {
-		m = newModel(absPaths[0], *topN)
+		m = newModel(absPaths[0], *topN, *readOnly, *skipConfirm)
 	} else {
-		m = newMultiRootModel(absPaths, *topN)
+		m = newMultiRootModel(absPaths, *topN, *readOnly, *skipConfirm)
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())

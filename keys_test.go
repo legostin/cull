@@ -15,7 +15,7 @@ func specialKeyMsg(keyType tea.KeyType) tea.KeyMsg {
 }
 
 func newKeysTestModel() model {
-	m := newModel("/tmp/test", 100)
+	m := newModel("/tmp/test", 100, false, false)
 	m.width = 120
 	m.height = 40
 	tab := m.tab()

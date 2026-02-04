@@ -146,6 +146,10 @@ type model struct {
 	// Multi-root support
 	rootPaths     []string
 	isVirtualRoot bool
+
+	// CLI flags
+	readOnly    bool
+	skipConfirm bool
 }
 
 // tab returns a pointer to the current tab's state.
@@ -153,15 +157,17 @@ func (m *model) tab() *tabState {
 	return &m.tabs[m.activeTab]
 }
 
-func newModel(path string, topN int) model {
+func newModel(path string, topN int, readOnly, skipConfirm bool) model {
 	m := model{
-		path:       path,
-		showHidden: true,
-		sortBy:     sortSizeDesc,
-		deleteType: deleteTrash,
-		cache:      make(map[string]dirCacheEntry),
-		topN:       topN,
-		interner:   NewPathInterner(),
+		path:        path,
+		showHidden:  true,
+		sortBy:      sortSizeDesc,
+		deleteType:  deleteTrash,
+		cache:       make(map[string]dirCacheEntry),
+		topN:        topN,
+		interner:    NewPathInterner(),
+		readOnly:    readOnly,
+		skipConfirm: skipConfirm,
 	}
 	for i := range m.tabs {
 		m.tabs[i] = newTabState()
@@ -169,7 +175,7 @@ func newModel(path string, topN int) model {
 	return m
 }
 
-func newMultiRootModel(paths []string, topN int) model {
+func newMultiRootModel(paths []string, topN int, readOnly, skipConfirm bool) model {
 	m := model{
 		path:          "/ (multiple roots)",
 		showHidden:    true,
@@ -180,6 +186,8 @@ func newMultiRootModel(paths []string, topN int) model {
 		isVirtualRoot: true,
 		topN:          topN,
 		interner:      NewPathInterner(),
+		readOnly:      readOnly,
+		skipConfirm:   skipConfirm,
 	}
 	for i := range m.tabs {
 		m.tabs[i] = newTabState()

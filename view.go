@@ -235,7 +235,9 @@ func (m model) View() string {
 		freeText = fmt.Sprintf("%s free", formatSize(int64(m.diskFree)))
 	}
 	logoStyle := titleStyle
-	if m.deleteType == deletePermanent {
+	if m.readOnly {
+		logoStyle = titleStyleReadOnly
+	} else if m.deleteType == deletePermanent {
 		logoStyle = titleStyleDanger
 	}
 	for i, line := range logo {
@@ -253,7 +255,9 @@ func (m model) View() string {
 
 	// Path
 	var pathPrefix string
-	if m.deleteType == deletePermanent {
+	if m.readOnly {
+		pathPrefix = lipgloss.NewStyle().Foreground(colorGreen).Bold(true).Render("READ-ONLY") + " "
+	} else if m.deleteType == deletePermanent {
 		pathPrefix = lipgloss.NewStyle().Foreground(colorRed).Bold(true).Render("⚠ PERMANENT DELETE") + " "
 	}
 	pathLine := pathStyle.Width(contentWidth).Render(" " + pathPrefix + m.path)
@@ -566,17 +570,28 @@ func (m model) View() string {
 		b.WriteString(filterStyle.Width(contentWidth).Render(filterLine))
 		b.WriteString("\n")
 	} else {
-		help := fmt.Sprintf(" %s select %s delete %s filter %s sort %s preview %s del mode %s tabs %s help %s quit",
-			helpKeyStyle.Render("<s>"),
-			helpKeyStyle.Render("<d>"),
-			helpKeyStyle.Render("<f>"),
-			helpKeyStyle.Render("<t>"),
-			helpKeyStyle.Render("<e>"),
-			helpKeyStyle.Render("<tab>"),
-			helpKeyStyle.Render("<shift>-<tab>"),
-			helpKeyStyle.Render("<?>"),
-			helpKeyStyle.Render("<q>"),
-		)
+		var help string
+		if m.readOnly {
+			help = fmt.Sprintf(" %s filter %s sort %s tabs %s help %s quit",
+				helpKeyStyle.Render("<f>"),
+				helpKeyStyle.Render("<t>"),
+				helpKeyStyle.Render("<shift>-<tab>"),
+				helpKeyStyle.Render("<?>"),
+				helpKeyStyle.Render("<q>"),
+			)
+		} else {
+			help = fmt.Sprintf(" %s select %s delete %s filter %s sort %s preview %s del mode %s tabs %s help %s quit",
+				helpKeyStyle.Render("<s>"),
+				helpKeyStyle.Render("<d>"),
+				helpKeyStyle.Render("<f>"),
+				helpKeyStyle.Render("<t>"),
+				helpKeyStyle.Render("<e>"),
+				helpKeyStyle.Render("<tab>"),
+				helpKeyStyle.Render("<shift>-<tab>"),
+				helpKeyStyle.Render("<?>"),
+				helpKeyStyle.Render("<q>"),
+			)
+		}
 		b.WriteString(helpDescStyle.Width(contentWidth).Render(help))
 		b.WriteString("\n")
 	}
@@ -622,15 +637,18 @@ func (m model) View() string {
 		if t.filterText != "" && m.mode != modeFilter {
 			status = fmt.Sprintf(" %d of %d items · filter: \"%s\"", len(t.entries), len(t.allEntries), t.filterText)
 		}
-		if len(t.selected) > 0 {
+		if !m.readOnly && len(t.selected) > 0 {
 			status += fmt.Sprintf(" · %d selected · %s", len(t.selected), formatSize(totalSelected))
 		}
 		// Mode indicators
 		if !m.showHidden {
 			status += " · hidden:off"
 		}
-		if m.deleteType == deletePermanent {
+		if !m.readOnly && m.deleteType == deletePermanent {
 			status += " · PERM DELETE"
+		}
+		if m.readOnly {
+			status += " · " + lipgloss.NewStyle().Foreground(colorGreen).Render("READ-ONLY")
 		}
 		b.WriteString(statusBarStyle.Width(contentWidth).Render(status))
 	}
@@ -714,14 +732,20 @@ func (m model) viewHelp(b *strings.Builder, contentWidth int) string {
 		"    backspace    go to parent directory",
 		"    esc          go to parent directory",
 		"    shift-tab    switch tab (BROWSE / LARGEST)",
-		"",
-		"  SELECTION & DELETION",
-		"    s            toggle select on cursor item",
-		"    S            range select from last select to cursor",
-		"    d            delete selected (or cursor item)",
-		"    e            dry-run preview of selected items",
-		"    tab          toggle trash / permanent delete mode",
-		"    y / n        confirm / cancel deletion",
+	}
+	if !m.readOnly {
+		lines = append(lines,
+			"",
+			"  SELECTION & DELETION",
+			"    s            toggle select on cursor item",
+			"    S            range select from last select to cursor",
+			"    d            delete selected (or cursor item)",
+			"    e            dry-run preview of selected items",
+			"    tab          toggle trash / permanent delete mode",
+			"    y / n        confirm / cancel deletion",
+		)
+	}
+	lines = append(lines,
 		"",
 		"  DISPLAY",
 		"    f            open filter prompt (type to filter, enter to apply, esc to clear)",
@@ -735,8 +759,10 @@ func (m model) viewHelp(b *strings.Builder, contentWidth int) string {
 		"",
 		"  FLAGS",
 		"    -n N         max items in LARGEST tab (default: 1000)",
+		"    --read-only  disable deletion",
+		"    -y           skip delete confirmation",
 		"    [paths...]   one or more directories to scan",
-	}
+	)
 
 	usedLines := 10 // logo(4) + path + tabbar + sep + header-placeholder + help + status
 	visibleRows := m.height - usedLines

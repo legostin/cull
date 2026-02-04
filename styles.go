@@ -157,6 +157,12 @@ var (
 				Foreground(colorRed).
 				Padding(0, 1)
 
+	// Title bar — read-only mode
+	titleStyleReadOnly = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(colorGreen).
+				Padding(0, 1)
+
 	// Tab bar — active tab
 	tabActiveStyle = lipgloss.NewStyle().
 			Foreground(colorYellow).

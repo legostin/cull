@@ -99,6 +99,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.navigateUp()
 
 	case "s":
+		if m.readOnly {
+			return m, nil
+		}
 		if t.cursor < len(t.entries) && !t.entries[t.cursor].IsParent {
 			p := t.entries[t.cursor].Path
 			if t.selected[p] {
@@ -110,6 +113,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "S":
+		if m.readOnly {
+			return m, nil
+		}
 		if t.cursor < len(t.entries) {
 			start := t.lastSelect
 			if start < 0 {
@@ -128,6 +134,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "d":
+		if m.readOnly {
+			return m, nil
+		}
 		if len(t.entries) == 0 {
 			return m, nil
 		}
@@ -136,6 +145,29 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if len(t.selected) == 0 {
 			return m, nil
+		}
+		if m.skipConfirm {
+			paths := make([]string, 0, len(t.selected))
+			for p := range t.selected {
+				paths = append(paths, p)
+			}
+			useTrash := m.deleteType == deleteTrash
+			return m, func() tea.Msg {
+				var deleted []string
+				for _, p := range paths {
+					var err error
+					if useTrash {
+						err = moveToTrash(p)
+					} else {
+						err = os.RemoveAll(p)
+					}
+					if err != nil {
+						return deleteErrMsg{err: err, deleted: deleted}
+					}
+					deleted = append(deleted, p)
+				}
+				return deleteDoneMsg{deleted: deleted}
+			}
 		}
 		m.mode = modeConfirm
 
@@ -198,6 +230,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case "tab":
+		if m.readOnly {
+			return m, nil
+		}
 		// Toggle trash / permanent delete mode
 		if m.deleteType == deleteTrash {
 			m.deleteType = deletePermanent
@@ -206,6 +241,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "e":
+		if m.readOnly {
+			return m, nil
+		}
 		// Dry-run preview
 		if len(t.selected) == 0 && t.cursor < len(t.entries) && !t.entries[t.cursor].IsParent {
 			t.selected[t.entries[t.cursor].Path] = true

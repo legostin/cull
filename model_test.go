@@ -8,7 +8,7 @@ import (
 )
 
 func newTestModel() model {
-	m := newModel("/tmp/test", 100)
+	m := newModel("/tmp/test", 100, false, false)
 	m.width = 120
 	m.height = 40
 	return m
@@ -360,7 +360,7 @@ func TestUpdateDirSizes_Empty(t *testing.T) {
 }
 
 func TestNewModel(t *testing.T) {
-	m := newModel("/tmp", 50)
+	m := newModel("/tmp", 50, false, false)
 	if m.path != "/tmp" {
 		t.Errorf("path = %q, want /tmp", m.path)
 	}
@@ -380,7 +380,7 @@ func TestNewModel(t *testing.T) {
 
 func TestNewMultiRootModel(t *testing.T) {
 	paths := []string{"/a", "/b"}
-	m := newMultiRootModel(paths, 100)
+	m := newMultiRootModel(paths, 100, false, false)
 	if !m.isVirtualRoot {
 		t.Error("should be virtual root")
 	}
@@ -510,7 +510,7 @@ func TestNameScrollTickMsg_Stale(t *testing.T) {
 
 // Test that Init returns nil for virtual root
 func TestInit_VirtualRoot(t *testing.T) {
-	m := newMultiRootModel([]string{"/a"}, 100)
+	m := newMultiRootModel([]string{"/a"}, 100, false, false)
 	cmd := m.Init()
 	if cmd != nil {
 		t.Error("virtual root Init should return nil")
@@ -626,7 +626,7 @@ func TestUpdateEntrySize(t *testing.T) {
 
 func TestNavigateToVirtualRoot(t *testing.T) {
 	paths := []string{"/a", "/b"}
-	m := newMultiRootModel(paths, 100)
+	m := newMultiRootModel(paths, 100, false, false)
 	m.isVirtualRoot = false
 	m.path = "/a"
 	m.tabs[tabBrowse].allEntries = []Entry{{Name: "file", Path: "/a/file"}}
