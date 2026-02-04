@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -233,15 +232,6 @@ func quickScanCmd(path string) tea.Cmd {
 		}
 		return quickScanDoneMsg{entries: entries, path: path}
 	}
-}
-
-// diskFreeSpace returns available bytes on the filesystem containing path.
-func diskFreeSpace(path string) uint64 {
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(path, &stat); err != nil {
-		return 0
-	}
-	return stat.Bavail * uint64(stat.Bsize)
 }
 
 // --- Deep scanner: progressive top-N largest ---

@@ -16,6 +16,8 @@ func moveToTrash(path string) error {
 		return trashDarwin(path)
 	case "linux":
 		return trashLinux(path)
+	case "windows":
+		return trashWindows(path)
 	default:
 		return fmt.Errorf("trash not supported on %s", runtime.GOOS)
 	}
@@ -83,4 +85,13 @@ func trashLinux(path string) error {
 	}
 
 	return os.Rename(path, dest)
+}
+
+// trashWindows moves an item to the Recycle Bin on Windows using SHFileOperation.
+func trashWindows(path string) error {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	return shellMoveToRecycleBin(absPath)
 }
