@@ -111,6 +111,10 @@ var (
 			Bold(true).
 			Padding(0, 1)
 
+	// Symlink name (light cyan)
+	symlinkStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#66ccdd"))
+
 	// Unsized directory name (dim, not yet computed)
 	dirUnsizedStyle = lipgloss.NewStyle().
 			Foreground(colorDim)
@@ -166,4 +170,20 @@ var (
 	dupeHeaderStyle = lipgloss.NewStyle().
 			Foreground(colorDim).
 			Bold(true)
+
+	// Scanning row gradient wave palette (muted olive → soft gold → muted olive)
+	scanGradient = []lipgloss.Color{
+		"#6a6040",
+		"#7d7248",
+		"#908450",
+		"#a39658",
+		"#b5a860",
+		"#c4b568",
+		"#d0c070",
+		"#c4b568",
+		"#b5a860",
+		"#a39658",
+		"#908450",
+		"#7d7248",
+	}
 )
