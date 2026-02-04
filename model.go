@@ -563,8 +563,10 @@ func (m *model) updateDirSizes(sizes map[string]int64) {
 		return
 	}
 
-	// Re-sort and reapply filter
-	sortEntries(bt.allEntries, m.sortBy)
+	// Re-sort only when sorting by size (other sort keys are unaffected by size changes)
+	if m.sortBy == sortSizeDesc {
+		sortEntries(bt.allEntries, m.sortBy)
+	}
 	m.applyFilterForTab(tabBrowse)
 
 	// Restore cursor to the same entry
@@ -582,42 +584,6 @@ func (m *model) updateDirSizes(sizes map[string]int64) {
 	ce := m.cache[m.path]
 	ce.browseEntries = bt.allEntries
 	m.cache[m.path] = ce
-}
-
-// updateEntrySize updates a directory entry's size and re-sorts with stable cursor.
-func (m *model) updateEntrySize(path string, size int64) {
-	bt := &m.tabs[tabBrowse]
-	// Remember what the cursor points to
-	var cursorPath string
-	if bt.cursor < len(bt.entries) {
-		cursorPath = bt.entries[bt.cursor].Path
-	}
-
-	// Update the size in allEntries
-	for i := range bt.allEntries {
-		if bt.allEntries[i].Path == path {
-			bt.allEntries[i].Size = size
-			bt.allEntries[i].Sized = true
-			break
-		}
-	}
-
-	// Re-sort allEntries using current sort mode
-	sortEntries(bt.allEntries, m.sortBy)
-
-	// Reapply filter to rebuild entries from sorted allEntries
-	m.applyFilterForTab(tabBrowse)
-
-	// Restore cursor to the same entry
-	if cursorPath != "" {
-		for i, e := range bt.entries {
-			if e.Path == cursorPath {
-				bt.cursor = i
-				break
-			}
-		}
-	}
-	m.clampOffset()
 }
 
 // removeDeleted removes deleted paths from entries and selection across all tabs, fixes cursor.

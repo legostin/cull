@@ -181,7 +181,7 @@ func quickScanDir(path string) ([]Entry, error) {
 		return nil, err
 	}
 
-	entries := make([]Entry, 0, len(dirEntries))
+	entries := make([]Entry, 0, len(dirEntries)+1)
 	for _, de := range dirEntries {
 		fullPath := filepath.Join(path, de.Name())
 		isSymlink := de.Type()&os.ModeSymlink != 0
