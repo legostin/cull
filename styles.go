@@ -192,4 +192,21 @@ var (
 		"#908450",
 		"#7d7248",
 	}
+
+	// Pre-built gradient styles (one per scanGradient color)
+	scanGradientStyles []lipgloss.Style
+
+	// Hoisted inline styles used in View()
+	freeTextStyle       = lipgloss.NewStyle().Foreground(colorGreen).Bold(true)
+	readOnlyBadgeStyle  = lipgloss.NewStyle().Foreground(colorGreen).Bold(true)
+	permDeleteBadgeStyle = lipgloss.NewStyle().Foreground(colorRed).Bold(true)
+	separatorStyle      = lipgloss.NewStyle().Foreground(colorBorder)
+	readOnlyStatusStyle = lipgloss.NewStyle().Foreground(colorGreen)
 )
+
+func init() {
+	scanGradientStyles = make([]lipgloss.Style, len(scanGradient))
+	for i, c := range scanGradient {
+		scanGradientStyles[i] = lipgloss.NewStyle().Foreground(c)
+	}
+}

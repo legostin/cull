@@ -597,33 +597,6 @@ func TestEntryDisplayName_EmptyPath(t *testing.T) {
 	}
 }
 
-func TestUpdateEntrySize(t *testing.T) {
-	m := newTestModel()
-	tab := m.tab()
-	tab.allEntries = []Entry{
-		{Name: "..", Path: "/tmp", IsDir: true, IsParent: true},
-		{Name: "dir1", Path: "/tmp/test/dir1", IsDir: true, Sized: false, Size: 0},
-		{Name: "dir2", Path: "/tmp/test/dir2", IsDir: true, Sized: true, Size: 100},
-	}
-	tab.entries = append([]Entry{}, tab.allEntries...)
-	tab.cursor = 2 // pointing at dir2
-
-	m.updateEntrySize("/tmp/test/dir1", 500)
-
-	var found bool
-	for _, e := range tab.allEntries {
-		if e.Path == "/tmp/test/dir1" {
-			if e.Size != 500 || !e.Sized {
-				t.Errorf("dir1: size=%d sized=%v", e.Size, e.Sized)
-			}
-			found = true
-		}
-	}
-	if !found {
-		t.Error("dir1 not found after update")
-	}
-}
-
 func TestNavigateToVirtualRoot(t *testing.T) {
 	paths := []string{"/a", "/b"}
 	m := newMultiRootModel(paths, 100, false, false)

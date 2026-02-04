@@ -26,8 +26,7 @@ func gradientWave(text string, phase int) string {
 			continue
 		}
 		idx := ((i + phase) % wl + wl) % wl
-		s := lipgloss.NewStyle().Foreground(scanGradient[idx])
-		b.WriteString(s.Render(string(r)))
+		b.WriteString(scanGradientStyles[idx].Render(string(r)))
 	}
 	return b.String()
 }
@@ -221,6 +220,7 @@ func (m model) View() string {
 	}
 
 	var b strings.Builder
+	b.Grow(8192)
 	contentWidth := m.width - 2
 
 	// ASCII art logo + disk free
@@ -247,7 +247,7 @@ func (m model) View() string {
 			if pad < 1 {
 				pad = 1
 			}
-			styled += strings.Repeat(" ", pad) + lipgloss.NewStyle().Foreground(colorGreen).Bold(true).Render(freeText)
+			styled += strings.Repeat(" ", pad) + freeTextStyle.Render(freeText)
 		}
 		b.WriteString(styled)
 		b.WriteString("\n")
@@ -256,9 +256,9 @@ func (m model) View() string {
 	// Path
 	var pathPrefix string
 	if m.readOnly {
-		pathPrefix = lipgloss.NewStyle().Foreground(colorGreen).Bold(true).Render("READ-ONLY") + " "
+		pathPrefix = readOnlyBadgeStyle.Render("READ-ONLY") + " "
 	} else if m.deleteType == deletePermanent {
-		pathPrefix = lipgloss.NewStyle().Foreground(colorRed).Bold(true).Render("⚠ PERMANENT DELETE") + " "
+		pathPrefix = permDeleteBadgeStyle.Render("⚠ PERMANENT DELETE") + " "
 	}
 	pathLine := pathStyle.Width(contentWidth).Render(" " + pathPrefix + m.path)
 	b.WriteString(pathLine)
@@ -268,8 +268,9 @@ func (m model) View() string {
 	b.WriteString(m.renderTabBar(contentWidth))
 	b.WriteString("\n")
 
-	// Separator
-	b.WriteString(lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", contentWidth)))
+	// Separator (computed once, reused)
+	separator := separatorStyle.Render(strings.Repeat("─", contentWidth))
+	b.WriteString(separator)
 	b.WriteString("\n")
 
 	// Error
@@ -541,20 +542,21 @@ func (m model) View() string {
 	}
 
 	// Separator
-	b.WriteString(lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", contentWidth)))
+	b.WriteString(separator)
 	b.WriteString("\n")
 
 	// Confirm dialog / filter input / help line
 	if m.mode == modeConfirm {
 		totalSize := int64(0)
 		count := 0
+		sizeMap := make(map[string]int64, len(t.entries))
+		for _, e := range t.entries {
+			sizeMap[e.Path] = e.Size
+		}
 		for p := range t.selected {
-			for _, e := range t.entries {
-				if e.Path == p {
-					totalSize += e.Size
-					count++
-					break
-				}
+			if sz, ok := sizeMap[p]; ok {
+				totalSize += sz
+				count++
 			}
 		}
 		var confirmText string
@@ -625,11 +627,14 @@ func (m model) View() string {
 		b.WriteString(scanningStyle.Width(contentWidth).Render(status))
 	} else {
 		var totalSelected int64
-		for p := range t.selected {
+		if len(t.selected) > 0 {
+			sizeMap := make(map[string]int64, len(t.entries))
 			for _, e := range t.entries {
-				if e.Path == p {
-					totalSelected += e.Size
-					break
+				sizeMap[e.Path] = e.Size
+			}
+			for p := range t.selected {
+				if sz, ok := sizeMap[p]; ok {
+					totalSelected += sz
 				}
 			}
 		}
@@ -648,7 +653,7 @@ func (m model) View() string {
 			status += " · PERM DELETE"
 		}
 		if m.readOnly {
-			status += " · " + lipgloss.NewStyle().Foreground(colorGreen).Render("READ-ONLY")
+			status += " · " + readOnlyStatusStyle.Render("READ-ONLY")
 		}
 		b.WriteString(statusBarStyle.Width(contentWidth).Render(status))
 	}
@@ -671,18 +676,19 @@ func (m model) viewDryRun(b *strings.Builder, contentWidth int) string {
 
 	count := 0
 	var totalSize int64
+	sizeMap := make(map[string]int64, len(t.allEntries))
+	for _, e := range t.allEntries {
+		sizeMap[e.Path] = e.Size
+	}
 	for p := range t.selected {
-		for _, e := range t.allEntries {
-			if e.Path == p {
-				if count < visibleRows {
-					line := fmt.Sprintf("  %9s  %s", formatSize(e.Size), e.Path)
-					b.WriteString(line)
-					b.WriteString("\n")
-				}
-				totalSize += e.Size
-				count++
-				break
+		if sz, ok := sizeMap[p]; ok {
+			if count < visibleRows {
+				line := fmt.Sprintf("  %9s  %s", formatSize(sz), p)
+				b.WriteString(line)
+				b.WriteString("\n")
 			}
+			totalSize += sz
+			count++
 		}
 	}
 
@@ -700,7 +706,7 @@ func (m model) viewDryRun(b *strings.Builder, contentWidth int) string {
 	}
 
 	// Separator
-	b.WriteString(lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", contentWidth)))
+	b.WriteString(separatorStyle.Render(strings.Repeat("─", contentWidth)))
 	b.WriteString("\n")
 
 	// Summary + help
@@ -788,7 +794,7 @@ func (m model) viewHelp(b *strings.Builder, contentWidth int) string {
 	}
 
 	// Separator
-	b.WriteString(lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", contentWidth)))
+	b.WriteString(separatorStyle.Render(strings.Repeat("─", contentWidth)))
 	b.WriteString("\n")
 
 	// Help line
