@@ -20,6 +20,18 @@ func nameScrollTickCmd(gen int) tea.Cmd {
 	})
 }
 
+// scanAnimTickMsg fires periodically to advance the scanning gradient wave.
+type scanAnimTickMsg struct {
+	gen int
+}
+
+// scanAnimTickCmd returns a command that fires after the scan animation interval.
+func scanAnimTickCmd(gen int) tea.Cmd {
+	return tea.Tick(80*time.Millisecond, func(time.Time) tea.Msg {
+		return scanAnimTickMsg{gen: gen}
+	})
+}
+
 type mode int
 
 const (
@@ -113,7 +125,7 @@ type model struct {
 	deepScanning bool
 	deepScanDone bool
 	deepScanCh   chan deepScanMsg
-	deepScanDir  string // currently scanned directory name for status bar
+	deepScanDirs map[string]bool // set of first-level dir paths currently being scanned
 	topN         int
 
 	// Path interner
@@ -126,6 +138,10 @@ type model struct {
 	nameScroll     int    // tick counter for marquee animation
 	nameScrollPath string // path of entry being scrolled (reset on cursor change)
 	nameScrollGen  int    // generation counter; incremented by resetNameScroll
+
+	// Scan animation state (gradient wave on scanning row)
+	scanAnimPhase int
+	scanAnimGen   int
 
 	// Multi-root support
 	rootPaths     []string
@@ -286,14 +302,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.deepScanDone = false
 		m.tabs[tabLargest] = newTabState()
 		// Start unified deep scan
-		var deepCmd tea.Cmd
+		var deepCmd, animCmd tea.Cmd
 		if !m.isVirtualRoot {
 			unsizedDirs := m.collectUnsizedDirs()
 			m.deepScanning = true
 			m.deepScanCh = startDeepScan(msg.path, m.topN, unsizedDirs)
 			deepCmd = pollDeepScanCmd(msg.path, m.deepScanCh)
+			animCmd = m.startScanAnim()
 		}
-		return m, tea.Batch(scrollCmd, deepCmd)
+		return m, tea.Batch(scrollCmd, deepCmd, animCmd)
 
 	case scanErrMsg:
 		m.errMsg = msg.err.Error()
@@ -312,14 +329,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update BROWSE tab dir sizes
 		m.updateDirSizes(msg.dirSizes)
 
-		// Update status bar directory name
-		m.deepScanDir = msg.scanningDir
+		// Update set of actively scanning directories
+		m.deepScanDirs = msg.scanningDirs
 
 		if msg.done {
 			m.deepScanning = false
 			m.deepScanDone = true
 			m.deepScanCh = nil
-			m.deepScanDir = ""
+			m.deepScanDirs = nil
 			// Save deep scan results to cache
 			ce := m.cache[m.path]
 			ce.largestEntries = lt.allEntries
@@ -345,6 +362,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case nameScrollTickMsg:
 		return m.handleNameScrollTick(msg)
 
+	case scanAnimTickMsg:
+		if msg.gen != m.scanAnimGen || !m.deepScanning {
+			return m, nil
+		}
+		m.scanAnimPhase++
+		return m, scanAnimTickCmd(m.scanAnimGen)
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -352,10 +376,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// startScanAnim resets and starts the scan animation tick chain.
+func (m *model) startScanAnim() tea.Cmd {
+	m.scanAnimPhase = 0
+	m.scanAnimGen++
+	return scanAnimTickCmd(m.scanAnimGen)
+}
+
 // entryDisplayName returns the name shown in the view for the given entry and tab.
 func (m model) entryDisplayName(e Entry) string {
 	name := e.Name
-	if e.IsDir {
+	if e.IsSymlink {
+		name += " →"
+	} else if e.IsDir {
 		name += "/"
 	}
 	if m.activeTab == tabLargest && e.Path != "" {
@@ -663,7 +696,8 @@ func (m model) navigateInto(path string) (tea.Model, tea.Cmd) {
 		unsizedDirs := m.collectUnsizedDirs()
 		m.deepScanning = true
 		m.deepScanCh = startDeepScan(path, m.topN, unsizedDirs)
-		return m, pollDeepScanCmd(path, m.deepScanCh)
+		animCmd := m.startScanAnim()
+		return m, tea.Batch(pollDeepScanCmd(path, m.deepScanCh), animCmd)
 	}
 
 	// No cache — quick scan
@@ -758,7 +792,8 @@ func (m model) navigateUp() (tea.Model, tea.Cmd) {
 			if len(unsizedDirs) > 0 {
 				m.deepScanning = true
 				m.deepScanCh = startDeepScan(parent, m.topN, unsizedDirs)
-				return m, pollDeepScanCmd(parent, m.deepScanCh)
+				animCmd := m.startScanAnim()
+				return m, tea.Batch(pollDeepScanCmd(parent, m.deepScanCh), animCmd)
 			}
 			return m, nil
 		}
@@ -766,7 +801,8 @@ func (m model) navigateUp() (tea.Model, tea.Cmd) {
 		unsizedDirs := m.collectUnsizedDirs()
 		m.deepScanning = true
 		m.deepScanCh = startDeepScan(parent, m.topN, unsizedDirs)
-		return m, pollDeepScanCmd(parent, m.deepScanCh)
+		animCmd := m.startScanAnim()
+		return m, tea.Batch(pollDeepScanCmd(parent, m.deepScanCh), animCmd)
 	}
 
 	// No cache — full quick scan
@@ -787,7 +823,7 @@ func (m model) navigateToVirtualRoot() model {
 	m.deepScanning = false
 	m.deepScanDone = false
 	m.deepScanCh = nil
-	m.deepScanDir = ""
+	m.deepScanDirs = nil
 
 	// Reset non-browse tabs
 	m.tabs[tabLargest] = newTabState()

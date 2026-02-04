@@ -7,8 +7,9 @@ import (
 	"hash/crc32"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
-	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,6 +23,7 @@ type Entry struct {
 	IsDir      bool
 	IsParent   bool      // true for the ".." entry
 	Sized      bool      // true when the size has been fully computed
+	IsSymlink  bool      // true if the entry is a symbolic link
 	ModTime    time.Time // last modification time
 	CreateTime time.Time // birth / creation time (macOS)
 
@@ -182,22 +184,38 @@ func quickScanDir(path string) ([]Entry, error) {
 	entries := make([]Entry, 0, len(dirEntries))
 	for _, de := range dirEntries {
 		fullPath := filepath.Join(path, de.Name())
+		isSymlink := de.Type()&os.ModeSymlink != 0
+
 		entry := Entry{
-			Name:  de.Name(),
-			Path:  fullPath,
-			IsDir: de.IsDir(),
+			Name:      de.Name(),
+			Path:      fullPath,
+			IsSymlink: isSymlink,
 		}
 
-		info, infoErr := de.Info()
-		if infoErr == nil {
-			entry.ModTime = info.ModTime()
-			if !de.IsDir() {
-				entry.Size = info.Size()
+		if isSymlink {
+			// Resolve symlink target to determine if it's a directory
+			targetInfo, err := os.Stat(fullPath)
+			if err == nil {
+				entry.IsDir = targetInfo.IsDir()
+				entry.ModTime = targetInfo.ModTime()
+				entry.CreateTime = extractBirthTime(fullPath, targetInfo)
 			}
-			entry.CreateTime = extractBirthTime(fullPath, info)
-		}
-		if !de.IsDir() {
+			// Symlinks contribute zero size
+			entry.Size = 0
 			entry.Sized = true
+		} else {
+			entry.IsDir = de.IsDir()
+			info, infoErr := de.Info()
+			if infoErr == nil {
+				entry.ModTime = info.ModTime()
+				if !de.IsDir() {
+					entry.Size = info.Size()
+				}
+				entry.CreateTime = extractBirthTime(fullPath, info)
+			}
+			if !de.IsDir() {
+				entry.Sized = true
+			}
 		}
 
 		entries = append(entries, entry)
@@ -239,11 +257,11 @@ func quickScanCmd(path string) tea.Cmd {
 // deepScanMsg delivers a streaming snapshot of the top-N largest files
 // and accumulated first-level directory sizes.
 type deepScanMsg struct {
-	rootPath    string
-	entries     []Entry          // current top-N snapshot
-	dirSizes    map[string]int64 // first-level dir -> accumulated size
-	scanningDir string           // dir currently being walked (for status bar)
-	done        bool             // true when walk is complete
+	rootPath     string
+	entries      []Entry          // current top-N snapshot
+	dirSizes     map[string]int64 // first-level dir -> accumulated size
+	scanningDirs map[string]bool  // set of first-level dir paths currently being scanned
+	done         bool             // true when walk is complete
 }
 
 // entryHeap is a min-heap of Entry by Size, for top-N largest.
@@ -262,18 +280,28 @@ func (h *entryHeap) Pop() interface{} {
 }
 
 // snapshotHeap extracts a sorted (size desc) copy of the heap contents.
-func snapshotHeap(h *entryHeap) []Entry {
+// If fillCreateTime is true, extractBirthTime is called for each entry
+// (deferred from the hot loop to avoid unnecessary syscalls).
+func snapshotHeap(h *entryHeap, fillCreateTime bool) []Entry {
 	entries := make([]Entry, h.Len())
 	copy(entries, *h)
+	if fillCreateTime {
+		for i := range entries {
+			info, err := os.Stat(entries[i].Path)
+			if err == nil {
+				entries[i].CreateTime = extractBirthTime(entries[i].Path, info)
+			}
+		}
+	}
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Size > entries[j].Size
 	})
 	return entries
 }
 
-// startDeepScan spawns a goroutine that walks the directory tree and sends
-// periodic top-N snapshots through the returned channel. It also accumulates
-// sizes for first-level subdirectories (for the BROWSE tab).
+// startDeepScan spawns a worker pool that walks first-level directories in
+// parallel and sends periodic top-N snapshots through the returned channel.
+// It also accumulates sizes for first-level subdirectories (for the BROWSE tab).
 func startDeepScan(root string, topN int, firstLevelDirs []string) chan deepScanMsg {
 	if topN <= 0 {
 		topN = 1000
@@ -281,92 +309,177 @@ func startDeepScan(root string, topN int, firstLevelDirs []string) chan deepScan
 
 	ch := make(chan deepScanMsg, 2)
 
-	// Build set of first-level dir paths for fast prefix matching.
-	// Store with trailing separator for unambiguous prefix checks.
-	type dirPrefix struct {
-		path   string // original path (map key)
-		prefix string // path + separator
-	}
-	prefixes := make([]dirPrefix, 0, len(firstLevelDirs))
-	for _, d := range firstLevelDirs {
-		prefixes = append(prefixes, dirPrefix{path: d, prefix: d + string(filepath.Separator)})
-	}
+	// Get the device ID of the root to skip cross-device mounts (e.g. /proc, /sys).
+	rootDev, hasRootDev := deviceID(root)
 
 	go func() {
 		defer close(ch)
 
+		// Shared state protected by mu.
+		var mu sync.Mutex
 		h := &entryHeap{}
 		heap.Init(h)
-
 		dirSizes := make(map[string]int64, len(firstLevelDirs))
-		var scanningDir string
-		fileCount := 0
+		scanningDirs := make(map[string]bool, len(firstLevelDirs))
 
-		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return nil
+		// --- Phase 1: scan root-level files (not inside any subdir) ---
+		rootEntries, _ := os.ReadDir(root)
+		for _, de := range rootEntries {
+			if de.IsDir() || de.Type()&os.ModeSymlink != 0 {
+				continue
 			}
-
-			if d.IsDir() {
-				scanningDir = filepath.Base(path)
-				return nil
-			}
-
-			info, err := d.Info()
+			path := filepath.Join(root, de.Name())
+			info, err := de.Info()
 			if err != nil {
-				return nil
+				continue
 			}
 			size := info.Size()
-
-			// Accumulate into the first-level dir this file belongs to
-			for _, dp := range prefixes {
-				if strings.HasPrefix(path, dp.prefix) {
-					dirSizes[dp.path] += size
-					break
-				}
-			}
-
-			entry := Entry{
-				Name:       d.Name(),
-				Path:       path,
-				Size:       size,
-				Sized:      true,
-				ModTime:    info.ModTime(),
-				CreateTime: extractBirthTime(path, info),
-			}
-
 			if h.Len() < topN {
-				heap.Push(h, entry)
+				heap.Push(h, Entry{
+					Name:    de.Name(),
+					Path:    path,
+					Size:    size,
+					Sized:   true,
+					ModTime: info.ModTime(),
+				})
 			} else if size > (*h)[0].Size {
 				heap.Pop(h)
-				heap.Push(h, entry)
+				heap.Push(h, Entry{
+					Name:    de.Name(),
+					Path:    path,
+					Size:    size,
+					Sized:   true,
+					ModTime: info.ModTime(),
+				})
 			}
+		}
 
-			fileCount++
-			if fileCount%5000 == 0 {
-				// Copy dirSizes for snapshot
-				snap := make(map[string]int64, len(dirSizes))
-				for k, v := range dirSizes {
-					snap[k] = v
-				}
-				ch <- deepScanMsg{
-					rootPath:    root,
-					entries:     snapshotHeap(h),
-					dirSizes:    snap,
-					scanningDir: scanningDir,
+		// --- Phase 2: parallel walk of first-level directories ---
+		numWorkers := runtime.NumCPU()
+		if numWorkers > len(firstLevelDirs) {
+			numWorkers = len(firstLevelDirs)
+		}
+		if numWorkers < 1 {
+			numWorkers = 1
+		}
+
+		work := make(chan string, len(firstLevelDirs))
+		for _, d := range firstLevelDirs {
+			work <- d
+		}
+		close(work)
+
+		// Dedicated snapshot ticker goroutine.
+		const snapshotInterval = 200 * time.Millisecond
+		tickerDone := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(snapshotInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					mu.Lock()
+					snap := make(map[string]int64, len(dirSizes))
+					for k, v := range dirSizes {
+						snap[k] = v
+					}
+					sdSnap := make(map[string]bool, len(scanningDirs))
+					for k := range scanningDirs {
+						sdSnap[k] = true
+					}
+					entries := snapshotHeap(h, false)
+					mu.Unlock()
+					ch <- deepScanMsg{
+						rootPath:     root,
+						entries:      entries,
+						dirSizes:     snap,
+						scanningDirs: sdSnap,
+					}
+				case <-tickerDone:
+					return
 				}
 			}
+		}()
 
-			return nil
-		})
+		var wg sync.WaitGroup
+		wg.Add(numWorkers)
+		for i := 0; i < numWorkers; i++ {
+			go func() {
+				defer wg.Done()
+				for dirPath := range work {
+					mu.Lock()
+					scanningDirs[dirPath] = true
+					mu.Unlock()
 
-		// Final snapshot
+					_ = filepath.WalkDir(dirPath, func(path string, d os.DirEntry, err error) error {
+						if err != nil {
+							return nil
+						}
+
+						// Skip symlinks entirely — they don't contribute to real disk usage.
+						if d.Type()&os.ModeSymlink != 0 {
+							return nil
+						}
+
+						if d.IsDir() {
+							// Skip directories on different filesystems.
+							if hasRootDev && path != dirPath {
+								if dev, ok := deviceID(path); ok && dev != rootDev {
+									return filepath.SkipDir
+								}
+							}
+							return nil
+						}
+
+						info, err := d.Info()
+						if err != nil {
+							return nil
+						}
+						size := info.Size()
+
+						mu.Lock()
+						dirSizes[dirPath] += size
+
+						if h.Len() < topN {
+							heap.Push(h, Entry{
+								Name:    d.Name(),
+								Path:    path,
+								Size:    size,
+								Sized:   true,
+								ModTime: info.ModTime(),
+							})
+						} else if size > (*h)[0].Size {
+							heap.Pop(h)
+							heap.Push(h, Entry{
+								Name:    d.Name(),
+								Path:    path,
+								Size:    size,
+								Sized:   true,
+								ModTime: info.ModTime(),
+							})
+						}
+						mu.Unlock()
+
+						return nil
+					})
+
+					mu.Lock()
+					delete(scanningDirs, dirPath)
+					mu.Unlock()
+				}
+			}()
+		}
+
+		wg.Wait()
+		close(tickerDone)
+
+		// Final snapshot — fill CreateTime only for the final top-N entries.
 		ch <- deepScanMsg{
-			rootPath:    root,
-			entries:     snapshotHeap(h),
-			dirSizes:    dirSizes,
-			scanningDir: "",
-			done:        true,
+			rootPath:     root,
+			entries:      snapshotHeap(h, true),
+			dirSizes:     dirSizes,
+			scanningDirs: nil,
+			done:         true,
 		}
 	}()
 
