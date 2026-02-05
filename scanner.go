@@ -27,6 +27,9 @@ type Entry struct {
 	ModTime    time.Time // last modification time
 	CreateTime time.Time // birth / creation time (macOS)
 
+	// Stale is true when the trash file no longer exists (emptied externally)
+	Stale bool
+
 	// Interned directory prefix ID (session-local, not persisted in cache)
 	DirID uint32
 }

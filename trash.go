@@ -11,10 +11,11 @@ import (
 )
 
 // moveToTrash moves a file or directory to the system trash.
-func moveToTrash(path string) error {
+// Returns the destination path in the trash and any error.
+func moveToTrash(path string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return err
+		return "", err
 	}
 	trashDir := filepath.Join(home, ".Trash")
 	base := filepath.Base(path)
@@ -28,5 +29,5 @@ func moveToTrash(path string) error {
 		dest = filepath.Join(trashDir, fmt.Sprintf("%s %s%s", name, ts, ext))
 	}
 
-	return os.Rename(path, dest)
+	return dest, os.Rename(path, dest)
 }

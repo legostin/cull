@@ -195,6 +195,9 @@ func (m model) renderTabBar(contentWidth int) string {
 		{tabBrowse, "BROWSE"},
 		{tabLargest, "LARGEST"},
 	}
+	if m.trashRegistry != nil && len(m.trashRegistry.Records) > 0 {
+		tabs = append(tabs, tabInfo{tabHistory, "HISTORY"})
+	}
 
 	var parts []string
 	for _, ti := range tabs {
@@ -202,6 +205,10 @@ func (m model) renderTabBar(contentWidth int) string {
 		// Add scanning indicator for LARGEST tab while deep scan runs
 		if ti.id == tabLargest && ti.id != m.activeTab && m.deepScanning {
 			label += " ◐"
+		}
+		// Show item count for HISTORY tab
+		if ti.id == tabHistory {
+			label += fmt.Sprintf(" (%d)", len(m.trashRegistry.Records))
 		}
 
 		if ti.id == m.activeTab {
@@ -330,6 +337,14 @@ func (m model) View() string {
 			"CREATED",
 			"UPDATED"))
 		b.WriteString(header)
+	case tabHistory:
+		header := headerStyle.Render(fmt.Sprintf("  %*s %9s %4s  %-*s  %-10s  %-10s",
+			barWidth, "",
+			"SIZE", "",
+			nameWidth, "NAME",
+			"",
+			"DELETED"))
+		b.WriteString(header)
 	}
 	b.WriteString("\n")
 
@@ -424,6 +439,9 @@ func (m model) View() string {
 			if isActiveScanning {
 				dn = dn + " ◐"
 			}
+			if e.Stale {
+				dn = dn + " (gone)"
+			}
 			// Marquee: scroll long names under cursor
 			nameRunes := []rune(dn)
 			if len(nameRunes) > nameWidth {
@@ -440,6 +458,13 @@ func (m model) View() string {
 			pctStr := formatPercent(e.Size, totalSize)
 			plain := fmt.Sprintf("%s%s %9s %4s  %-*s  %-10s  %-10s", markerText, plainBar, sizeFormatted, pctStr, nameWidth, dn, createdStr, updatedStr)
 			row = cursorStyle.Width(contentWidth).Render(plain)
+		} else if e.Stale {
+			// Stale history entry — render entire row in dim gray
+			emptyBar := strings.Repeat(" ", barWidth)
+			truncName := truncateName(displayName+" (gone)", nameWidth)
+			plain := fmt.Sprintf("%s%s %9s %4s  %-*s  %-10s  %-10s",
+				markerText, emptyBar, sizeFormatted, "", nameWidth, truncName, createdStr, updatedStr)
+			row = staleStyle.Render(plain)
 		} else if isActiveScanning {
 			// Gradient wave on bar + size + pct only; name/dates use normal styles
 			var plainBar string
@@ -577,6 +602,16 @@ func (m model) View() string {
 			help = fmt.Sprintf(" %s filter %s sort %s tabs %s help %s quit",
 				helpKeyStyle.Render("<f>"),
 				helpKeyStyle.Render("<t>"),
+				helpKeyStyle.Render("<shift>-<tab>"),
+				helpKeyStyle.Render("<?>"),
+				helpKeyStyle.Render("<q>"),
+			)
+		} else if m.activeTab == tabHistory {
+			help = fmt.Sprintf(" %s select %s restore %s purge %s filter %s tabs %s help %s quit",
+				helpKeyStyle.Render("<s>"),
+				helpKeyStyle.Render("<r>"),
+				helpKeyStyle.Render("<d>"),
+				helpKeyStyle.Render("<f>"),
 				helpKeyStyle.Render("<shift>-<tab>"),
 				helpKeyStyle.Render("<?>"),
 				helpKeyStyle.Render("<q>"),
@@ -737,7 +772,7 @@ func (m model) viewHelp(b *strings.Builder, contentWidth int) string {
 		"    enter        enter directory (BROWSE tab)",
 		"    backspace    go to parent directory",
 		"    esc          go to parent directory",
-		"    shift-tab    switch tab (BROWSE / LARGEST)",
+		"    shift-tab    switch tab (BROWSE / LARGEST / HISTORY)",
 	}
 	if !m.readOnly {
 		lines = append(lines,
@@ -749,6 +784,11 @@ func (m model) viewHelp(b *strings.Builder, contentWidth int) string {
 			"    e            dry-run preview of selected items",
 			"    tab          toggle trash / permanent delete mode",
 			"    y / n        confirm / cancel deletion",
+			"",
+			"  HISTORY TAB",
+			"    r            restore selected items to original location",
+			"    d            permanently delete selected items from trash",
+			"    s            toggle select",
 		)
 	}
 	lines = append(lines,

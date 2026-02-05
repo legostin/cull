@@ -32,16 +32,17 @@ type shFileOpStruct struct {
 }
 
 // moveToTrash moves a file or directory to the Windows Recycle Bin.
-func moveToTrash(path string) error {
+// Returns empty string for the trash path since Windows doesn't expose it.
+func moveToTrash(path string) (string, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// SHFileOperation requires double-null terminated string
 	pathUTF16, err := syscall.UTF16FromString(absPath)
 	if err != nil {
-		return err
+		return "", err
 	}
 	pathUTF16 = append(pathUTF16, 0) // extra null terminator
 
@@ -53,7 +54,7 @@ func moveToTrash(path string) error {
 
 	ret, _, _ := shFileOperationW.Call(uintptr(unsafe.Pointer(&op)))
 	if ret != 0 {
-		return syscall.Errno(ret)
+		return "", syscall.Errno(ret)
 	}
-	return nil
+	return "", nil
 }

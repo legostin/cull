@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/exec"
+	"time"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -40,8 +41,16 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "shift+tab":
-		m.activeTab = (m.activeTab + 1) % 2
+		hasHistory := m.trashRegistry != nil && len(m.trashRegistry.Records) > 0
+		numTabs := tabID(2)
+		if hasHistory {
+			numTabs = 3
+		}
+		m.activeTab = (m.activeTab + 1) % numTabs
 		cmd := m.resetNameScroll()
+		if m.activeTab == tabHistory {
+			return m, tea.Batch(cmd, m.loadTrashTab())
+		}
 		return m, cmd
 
 	case "j", "down":
@@ -133,6 +142,53 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			t.lastSelect = t.cursor
 		}
 
+	case "r":
+		// Restore: only on history tab, not read-only
+		if m.readOnly || m.activeTab != tabHistory {
+			return m, nil
+		}
+		if len(t.entries) == 0 {
+			return m, nil
+		}
+		// Auto-select cursor item if nothing selected (skip stale)
+		if len(t.selected) == 0 && t.cursor < len(t.entries) && !t.entries[t.cursor].Stale {
+			t.selected[t.entries[t.cursor].Path] = true
+		}
+		if len(t.selected) == 0 {
+			return m, nil
+		}
+		// Collect only non-stale selected paths
+		staleSet := make(map[string]bool)
+		for _, e := range t.entries {
+			if e.Stale {
+				staleSet[e.Path] = true
+			}
+		}
+		paths := make([]string, 0, len(t.selected))
+		for p := range t.selected {
+			if !staleSet[p] {
+				paths = append(paths, p)
+			}
+		}
+		if len(paths) == 0 {
+			return m, nil
+		}
+		reg := m.trashRegistry
+		return m, func() tea.Msg {
+			var restored []string
+			for _, origPath := range paths {
+				rec, ok := reg.LookupByOriginalPath(origPath)
+				if !ok {
+					continue
+				}
+				if err := restoreFromTrash(rec); err != nil {
+					return restoreErrMsg{err: err, restored: restored}
+				}
+				restored = append(restored, origPath)
+			}
+			return restoreDoneMsg{restored: restored}
+		}
+
 	case "d":
 		if m.readOnly {
 			return m, nil
@@ -140,6 +196,37 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(t.entries) == 0 {
 			return m, nil
 		}
+
+		// On trash tab, "d" means purge from system trash
+		if m.activeTab == tabHistory {
+			if len(t.selected) == 0 && t.cursor < len(t.entries) {
+				t.selected[t.entries[t.cursor].Path] = true
+			}
+			if len(t.selected) == 0 {
+				return m, nil
+			}
+			paths := make([]string, 0, len(t.selected))
+			for p := range t.selected {
+				paths = append(paths, p)
+			}
+			reg := m.trashRegistry
+			return m, func() tea.Msg {
+				var purged []string
+				for _, origPath := range paths {
+					rec, ok := reg.LookupByOriginalPath(origPath)
+					if !ok {
+						continue
+					}
+					if err := purgeFromTrash(rec); err != nil {
+						return purgeErrMsg{err: err, purged: purged}
+					}
+					purged = append(purged, origPath)
+				}
+				return purgeDoneMsg{purged: purged}
+			}
+		}
+
+		// Normal delete flow (browse/largest tabs)
 		if len(t.selected) == 0 && t.cursor < len(t.entries) && !t.entries[t.cursor].IsParent {
 			t.selected[t.entries[t.cursor].Path] = true
 		}
@@ -147,27 +234,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.skipConfirm {
-			paths := make([]string, 0, len(t.selected))
-			for p := range t.selected {
-				paths = append(paths, p)
-			}
-			useTrash := m.deleteType == deleteTrash
-			return m, func() tea.Msg {
-				var deleted []string
-				for _, p := range paths {
-					var err error
-					if useTrash {
-						err = moveToTrash(p)
-					} else {
-						err = os.RemoveAll(p)
-					}
-					if err != nil {
-						return deleteErrMsg{err: err, deleted: deleted}
-					}
-					deleted = append(deleted, p)
-				}
-				return deleteDoneMsg{deleted: deleted}
-			}
+			return m, m.buildDeleteCmd(t)
 		}
 		m.mode = modeConfirm
 
@@ -263,31 +330,77 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// buildDeleteCmd creates a delete command that records TrashRecords when using trash mode.
+func (m model) buildDeleteCmd(t *tabState) tea.Cmd {
+	paths := make([]string, 0, len(t.selected))
+	// Build a size/dir map from entries for trash record creation
+	entryMap := make(map[string]Entry, len(t.entries))
+	for _, e := range t.entries {
+		entryMap[e.Path] = e
+	}
+	for p := range t.selected {
+		paths = append(paths, p)
+	}
+	useTrash := m.deleteType == deleteTrash
+	return func() tea.Msg {
+		var deleted []string
+		var trashRecords []TrashRecord
+		for _, p := range paths {
+			var err error
+			if useTrash {
+				var trashPath string
+				trashPath, err = moveToTrash(p)
+				if err == nil {
+					e := entryMap[p]
+					trashRecords = append(trashRecords, TrashRecord{
+						OriginalPath: p,
+						TrashPath:    trashPath,
+						DeletedAt:    time.Now(),
+						Size:         e.Size,
+						IsDir:        e.IsDir,
+					})
+				}
+			} else {
+				err = os.RemoveAll(p)
+			}
+			if err != nil {
+				return deleteErrMsg{err: err, deleted: deleted}
+			}
+			deleted = append(deleted, p)
+		}
+		return deleteDoneMsg{deleted: deleted, trashRecords: trashRecords}
+	}
+}
+
 func (m model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y":
 		t := m.tab()
-		paths := make([]string, 0, len(t.selected))
-		for p := range t.selected {
-			paths = append(paths, p)
-		}
-		useTrash := m.deleteType == deleteTrash
-		return m, func() tea.Msg {
-			var deleted []string
-			for _, p := range paths {
-				var err error
-				if useTrash {
-					err = moveToTrash(p)
-				} else {
-					err = os.RemoveAll(p)
-				}
-				if err != nil {
-					return deleteErrMsg{err: err, deleted: deleted}
-				}
-				deleted = append(deleted, p)
+
+		// On trash tab, confirm means purge
+		if m.activeTab == tabHistory {
+			paths := make([]string, 0, len(t.selected))
+			for p := range t.selected {
+				paths = append(paths, p)
 			}
-			return deleteDoneMsg{deleted: deleted}
+			reg := m.trashRegistry
+			return m, func() tea.Msg {
+				var purged []string
+				for _, origPath := range paths {
+					rec, ok := reg.LookupByOriginalPath(origPath)
+					if !ok {
+						continue
+					}
+					if err := purgeFromTrash(rec); err != nil {
+						return purgeErrMsg{err: err, purged: purged}
+					}
+					purged = append(purged, origPath)
+				}
+				return purgeDoneMsg{purged: purged}
+			}
 		}
+
+		return m, m.buildDeleteCmd(t)
 
 	case "n", "esc":
 		m.mode = modeNormal

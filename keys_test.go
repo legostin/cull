@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -136,8 +137,9 @@ func TestKey_ShiftS_RangeSelect(t *testing.T) {
 	}
 }
 
-func TestKey_ShiftTab_SwitchesTab(t *testing.T) {
+func TestKey_ShiftTab_SwitchesTab_TwoTabs(t *testing.T) {
 	m := newKeysTestModel()
+	// Empty registry → only 2 tabs
 	m.activeTab = tabBrowse
 
 	result, _ := m.Update(keyMsg("shift+tab"))
@@ -146,7 +148,36 @@ func TestKey_ShiftTab_SwitchesTab(t *testing.T) {
 		t.Errorf("activeTab = %d, want tabLargest", rm.activeTab)
 	}
 
-	// Switch back
+	// Wraps back to browse (no history tab)
+	result, _ = rm.Update(keyMsg("shift+tab"))
+	rm = result.(model)
+	if rm.activeTab != tabBrowse {
+		t.Errorf("activeTab = %d, want tabBrowse", rm.activeTab)
+	}
+}
+
+func TestKey_ShiftTab_SwitchesTab_ThreeTabs(t *testing.T) {
+	m := newKeysTestModel()
+	// Add a record so HISTORY tab appears
+	m.trashRegistry = &TrashRegistry{
+		Records: []TrashRecord{
+			{OriginalPath: "/tmp/gone.txt", TrashPath: "/trash/gone.txt", DeletedAt: time.Now()},
+		},
+	}
+	m.activeTab = tabBrowse
+
+	result, _ := m.Update(keyMsg("shift+tab"))
+	rm := result.(model)
+	if rm.activeTab != tabLargest {
+		t.Errorf("activeTab = %d, want tabLargest", rm.activeTab)
+	}
+
+	result, _ = rm.Update(keyMsg("shift+tab"))
+	rm = result.(model)
+	if rm.activeTab != tabHistory {
+		t.Errorf("activeTab = %d, want tabHistory", rm.activeTab)
+	}
+
 	result, _ = rm.Update(keyMsg("shift+tab"))
 	rm = result.(model)
 	if rm.activeTab != tabBrowse {

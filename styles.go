@@ -119,6 +119,10 @@ var (
 	dirUnsizedStyle = lipgloss.NewStyle().
 			Foreground(colorDim)
 
+	// Stale history entry (trash emptied externally, cannot restore)
+	staleStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#555555"))
+
 	// Currently scanning directory name (dark yellow)
 	scanningNameStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#b8962e"))

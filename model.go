@@ -2,6 +2,7 @@ package main
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -60,7 +61,8 @@ const (
 
 // deleteDoneMsg is sent after deletion completes.
 type deleteDoneMsg struct {
-	deleted []string
+	deleted      []string
+	trashRecords []TrashRecord // populated only for trash-mode deletions
 }
 
 // deleteErrMsg is sent when deletion fails.
@@ -69,11 +71,39 @@ type deleteErrMsg struct {
 	deleted []string // paths that were successfully deleted before the error
 }
 
+// restoreDoneMsg is sent after restore completes.
+type restoreDoneMsg struct {
+	restored []string
+}
+
+// restoreErrMsg is sent when restore fails partway.
+type restoreErrMsg struct {
+	err      error
+	restored []string
+}
+
+// purgeDoneMsg is sent after purge completes.
+type purgeDoneMsg struct {
+	purged []string
+}
+
+// purgeErrMsg is sent when purge fails partway.
+type purgeErrMsg struct {
+	err    error
+	purged []string
+}
+
+// trashLoadedMsg is sent when the trash tab entries are loaded.
+type trashLoadedMsg struct {
+	entries []Entry
+}
+
 type tabID int
 
 const (
 	tabBrowse  tabID = iota
 	tabLargest
+	tabHistory
 )
 
 type tabState struct {
@@ -103,7 +133,7 @@ type dirCacheEntry struct {
 type model struct {
 	path      string
 	activeTab tabID
-	tabs      [2]tabState
+	tabs      [3]tabState
 	mode      mode
 	width     int
 	height    int
@@ -147,6 +177,9 @@ type model struct {
 	rootPaths     []string
 	isVirtualRoot bool
 
+	// Trash registry
+	trashRegistry *TrashRegistry
+
 	// CLI flags
 	readOnly    bool
 	skipConfirm bool
@@ -158,16 +191,18 @@ func (m *model) tab() *tabState {
 }
 
 func newModel(path string, topN int, readOnly, skipConfirm bool) model {
+	reg, _ := loadTrashRegistry()
 	m := model{
-		path:        path,
-		showHidden:  true,
-		sortBy:      sortSizeDesc,
-		deleteType:  deleteTrash,
-		cache:       make(map[string]dirCacheEntry),
-		topN:        topN,
-		interner:    NewPathInterner(),
-		readOnly:    readOnly,
-		skipConfirm: skipConfirm,
+		path:          path,
+		showHidden:    true,
+		sortBy:        sortSizeDesc,
+		deleteType:    deleteTrash,
+		cache:         make(map[string]dirCacheEntry),
+		topN:          topN,
+		interner:      NewPathInterner(),
+		trashRegistry: reg,
+		readOnly:      readOnly,
+		skipConfirm:   skipConfirm,
 	}
 	for i := range m.tabs {
 		m.tabs[i] = newTabState()
@@ -176,6 +211,7 @@ func newModel(path string, topN int, readOnly, skipConfirm bool) model {
 }
 
 func newMultiRootModel(paths []string, topN int, readOnly, skipConfirm bool) model {
+	reg, _ := loadTrashRegistry()
 	m := model{
 		path:          "/ (multiple roots)",
 		showHidden:    true,
@@ -186,6 +222,7 @@ func newMultiRootModel(paths []string, topN int, readOnly, skipConfirm bool) mod
 		isVirtualRoot: true,
 		topN:          topN,
 		interner:      NewPathInterner(),
+		trashRegistry: reg,
 		readOnly:      readOnly,
 		skipConfirm:   skipConfirm,
 	}
@@ -358,11 +395,67 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.removeDeleted(msg.deleted)
 		m.diskFree = diskFreeSpace(m.path)
 		m.mode = modeNormal
+		if len(msg.trashRecords) > 0 && m.trashRegistry != nil {
+			_ = m.trashRegistry.AddAll(msg.trashRecords)
+		}
 		return m, nil
 
 	case deleteErrMsg:
 		m.removeDeleted(msg.deleted)
 		m.diskFree = diskFreeSpace(m.path)
+		m.errMsg = msg.err.Error()
+		m.mode = modeNormal
+		return m, nil
+
+	case trashLoadedMsg:
+		tt := &m.tabs[tabHistory]
+		tt.allEntries = msg.entries
+		tt.entries = msg.entries
+		tt.cursor = 0
+		tt.offset = 0
+		return m, nil
+
+	case restoreDoneMsg:
+		m.removeFromTrashTab(msg.restored)
+		if m.trashRegistry != nil {
+			_ = m.trashRegistry.Remove(msg.restored)
+		}
+		m.mode = modeNormal
+		// Bounce back if history tab is now empty
+		if m.activeTab == tabHistory && len(m.trashRegistry.Records) == 0 {
+			m.activeTab = tabBrowse
+		}
+		return m, nil
+
+	case restoreErrMsg:
+		if len(msg.restored) > 0 {
+			m.removeFromTrashTab(msg.restored)
+			if m.trashRegistry != nil {
+				_ = m.trashRegistry.Remove(msg.restored)
+			}
+		}
+		m.errMsg = msg.err.Error()
+		m.mode = modeNormal
+		return m, nil
+
+	case purgeDoneMsg:
+		m.removeFromTrashTab(msg.purged)
+		if m.trashRegistry != nil {
+			_ = m.trashRegistry.Remove(msg.purged)
+		}
+		m.mode = modeNormal
+		if m.activeTab == tabHistory && len(m.trashRegistry.Records) == 0 {
+			m.activeTab = tabBrowse
+		}
+		return m, nil
+
+	case purgeErrMsg:
+		if len(msg.purged) > 0 {
+			m.removeFromTrashTab(msg.purged)
+			if m.trashRegistry != nil {
+				_ = m.trashRegistry.Remove(msg.purged)
+			}
+		}
 		m.errMsg = msg.err.Error()
 		m.mode = modeNormal
 		return m, nil
@@ -403,6 +496,9 @@ func (m model) entryDisplayName(e Entry) string {
 		if rel, err := filepath.Rel(m.path, e.Path); err == nil {
 			name = rel
 		}
+	}
+	if m.activeTab == tabHistory && e.Path != "" {
+		name = e.Path
 	}
 	return name
 }
@@ -815,4 +911,54 @@ func (m model) navigateToVirtualRoot() model {
 	bt.cursor = 0
 	bt.offset = 0
 	return m
+}
+
+// loadTrashTab returns a command that loads registry entries into the trash tab.
+func (m *model) loadTrashTab() tea.Cmd {
+	reg := m.trashRegistry
+	if reg == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		if n := reg.Cleanup(); n > 0 {
+			_ = reg.Save()
+		}
+		entries := reg.ToEntries()
+		// Sort by deletion date descending (most recent first)
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].ModTime.After(entries[j].ModTime)
+		})
+		return trashLoadedMsg{entries: entries}
+	}
+}
+
+// removeFromTrashTab removes paths from the trash tab's entries and selection.
+func (m *model) removeFromTrashTab(paths []string) {
+	pathSet := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		pathSet[p] = true
+	}
+
+	t := &m.tabs[tabHistory]
+	for p := range pathSet {
+		delete(t.selected, p)
+	}
+
+	filtered := make([]Entry, 0, len(t.allEntries))
+	for _, e := range t.allEntries {
+		if !pathSet[e.Path] {
+			filtered = append(filtered, e)
+		}
+	}
+	t.allEntries = filtered
+	m.applyFilterForTab(tabHistory)
+	t.lastSelect = -1
+
+	if t.cursor >= len(t.entries) && len(t.entries) > 0 {
+		t.cursor = len(t.entries) - 1
+	}
+	if len(t.entries) == 0 {
+		t.cursor = 0
+	}
+	m.clampOffset()
 }
