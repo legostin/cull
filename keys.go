@@ -197,7 +197,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// On trash tab, "d" means purge from system trash
+		// On history tab, "d" means purge from system trash (with confirmation)
 		if m.activeTab == tabHistory {
 			if len(t.selected) == 0 && t.cursor < len(t.entries) {
 				t.selected[t.entries[t.cursor].Path] = true
@@ -205,25 +205,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if len(t.selected) == 0 {
 				return m, nil
 			}
-			paths := make([]string, 0, len(t.selected))
-			for p := range t.selected {
-				paths = append(paths, p)
-			}
-			reg := m.trashRegistry
-			return m, func() tea.Msg {
-				var purged []string
-				for _, origPath := range paths {
-					rec, ok := reg.LookupByOriginalPath(origPath)
-					if !ok {
-						continue
-					}
-					if err := purgeFromTrash(rec); err != nil {
-						return purgeErrMsg{err: err, purged: purged}
-					}
-					purged = append(purged, origPath)
-				}
-				return purgeDoneMsg{purged: purged}
-			}
+			m.mode = modeConfirm
+			return m, nil
 		}
 
 		// Normal delete flow (browse/largest tabs)

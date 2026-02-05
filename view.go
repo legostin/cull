@@ -585,7 +585,9 @@ func (m model) View() string {
 			}
 		}
 		var confirmText string
-		if m.deleteType == deleteTrash {
+		if m.activeTab == tabHistory {
+			confirmText = fmt.Sprintf("  Purge %d items (%s) permanently? [y/n]", count, formatSize(totalSize))
+		} else if m.deleteType == deleteTrash {
 			confirmText = fmt.Sprintf("  Trash %d items (%s)? [y/n]", count, formatSize(totalSize))
 		} else {
 			confirmText = fmt.Sprintf("  PERMANENTLY delete %d items (%s)? [y/n]", count, formatSize(totalSize))
