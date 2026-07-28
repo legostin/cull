@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -825,5 +826,33 @@ func TestDockerPruneErrMsg(t *testing.T) {
 	if m2.mode != modeNormal || m2.confirmDocker || m2.errMsg == "" {
 		t.Errorf("mode=%v confirmDocker=%v errMsg=%q, want modeNormal+false with error",
 			m2.mode, m2.confirmDocker, m2.errMsg)
+	}
+}
+
+func TestEntryDisplayName_Caches(t *testing.T) {
+	m := newTestModel()
+	m.activeTab = tabCaches
+	e := Entry{Name: "npm cache", Path: "/home/u/.npm/_cacache", IsDir: true}
+	if got := m.entryDisplayName(e); got != "npm cache · /home/u/.npm/_cacache" {
+		t.Errorf("entryDisplayName = %q", got)
+	}
+	d := Entry{Name: "Docker (system prune -a)", Path: dockerEntryPath}
+	if got := m.entryDisplayName(d); got != "Docker (system prune -a)" {
+		t.Errorf("docker entryDisplayName = %q", got)
+	}
+}
+
+func TestViewConfirm_Docker(t *testing.T) {
+	m := newTestModel()
+	m.activeTab = tabCaches
+	m.mode = modeConfirm
+	m.confirmDocker = true
+	ct := &m.tabs[tabCaches]
+	ct.allEntries = []Entry{{Name: "Docker (system prune -a)", Path: dockerEntryPath, Sized: true}}
+	ct.entries = ct.allEntries
+
+	out := m.View()
+	if !strings.Contains(out, "docker system prune -a -f") {
+		t.Error("confirm dialog must show the exact prune command")
 	}
 }

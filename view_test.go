@@ -211,3 +211,24 @@ func TestHeaderLabels(t *testing.T) {
 		t.Error("updatedHeaderLabel(sortUpdatedDesc) should include arrow")
 	}
 }
+
+func TestRenderTabBar_CachesAlwaysVisible(t *testing.T) {
+	m := newTestModel()
+	m.trashRegistry = &TrashRegistry{}
+	bar := m.renderTabBar(100)
+	if !strings.Contains(bar, "CACHES") {
+		t.Errorf("tab bar %q must contain CACHES", bar)
+	}
+	if strings.Contains(bar, "HISTORY") {
+		t.Errorf("tab bar %q must not contain HISTORY when trash is empty", bar)
+	}
+}
+
+func TestRenderTabBar_CachesCount(t *testing.T) {
+	m := newTestModel()
+	m.tabs[tabCaches].allEntries = []Entry{{Name: "npm cache", Path: "/a"}, {Name: "pip cache", Path: "/b"}}
+	bar := m.renderTabBar(100)
+	if !strings.Contains(bar, "CACHES (2)") {
+		t.Errorf("tab bar %q must contain CACHES (2)", bar)
+	}
+}

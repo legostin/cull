@@ -538,6 +538,13 @@ func (m model) entryDisplayName(e Entry) string {
 	if m.activeTab == tabHistory && e.Path != "" {
 		name = e.Path
 	}
+	if m.activeTab == tabCaches && e.Path != "" {
+		if e.Path == dockerEntryPath {
+			name = e.Name
+		} else {
+			name = e.Name + " · " + e.Path
+		}
+	}
 	return name
 }
 
