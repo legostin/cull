@@ -13,6 +13,9 @@ space-free
 .DS_Store
 Thumbs.db
 
+# Specs/plans (local only)
+docs/superpowers/
+
 # Test/debug
 *.test
 *.out
