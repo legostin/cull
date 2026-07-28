@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -137,26 +139,23 @@ func TestKey_ShiftS_RangeSelect(t *testing.T) {
 	}
 }
 
-func TestKey_ShiftTab_SwitchesTab_TwoTabs(t *testing.T) {
+func TestKey_ShiftTab_SwitchesTab_NoHistory(t *testing.T) {
 	m := newKeysTestModel()
-	// Empty registry → only 2 tabs
+	// Empty registry → 3 tabs (BROWSE / LARGEST / CACHES)
+	m.trashRegistry = &TrashRegistry{}
 	m.activeTab = tabBrowse
 
-	result, _ := m.Update(keyMsg("shift+tab"))
-	rm := result.(model)
-	if rm.activeTab != tabLargest {
-		t.Errorf("activeTab = %d, want tabLargest", rm.activeTab)
-	}
-
-	// Wraps back to browse (no history tab)
-	result, _ = rm.Update(keyMsg("shift+tab"))
-	rm = result.(model)
-	if rm.activeTab != tabBrowse {
-		t.Errorf("activeTab = %d, want tabBrowse", rm.activeTab)
+	want := []tabID{tabLargest, tabCaches, tabBrowse}
+	for _, w := range want {
+		result, _ := m.Update(keyMsg("shift+tab"))
+		m = result.(model)
+		if m.activeTab != w {
+			t.Fatalf("activeTab = %d, want %d", m.activeTab, w)
+		}
 	}
 }
 
-func TestKey_ShiftTab_SwitchesTab_ThreeTabs(t *testing.T) {
+func TestKey_ShiftTab_SwitchesTab_WithHistory(t *testing.T) {
 	m := newKeysTestModel()
 	// Add a record so HISTORY tab appears
 	m.trashRegistry = &TrashRegistry{
@@ -166,22 +165,13 @@ func TestKey_ShiftTab_SwitchesTab_ThreeTabs(t *testing.T) {
 	}
 	m.activeTab = tabBrowse
 
-	result, _ := m.Update(keyMsg("shift+tab"))
-	rm := result.(model)
-	if rm.activeTab != tabLargest {
-		t.Errorf("activeTab = %d, want tabLargest", rm.activeTab)
-	}
-
-	result, _ = rm.Update(keyMsg("shift+tab"))
-	rm = result.(model)
-	if rm.activeTab != tabHistory {
-		t.Errorf("activeTab = %d, want tabHistory", rm.activeTab)
-	}
-
-	result, _ = rm.Update(keyMsg("shift+tab"))
-	rm = result.(model)
-	if rm.activeTab != tabBrowse {
-		t.Errorf("activeTab = %d, want tabBrowse", rm.activeTab)
+	want := []tabID{tabLargest, tabCaches, tabHistory, tabBrowse}
+	for _, w := range want {
+		result, _ := m.Update(keyMsg("shift+tab"))
+		m = result.(model)
+		if m.activeTab != w {
+			t.Fatalf("activeTab = %d, want %d", m.activeTab, w)
+		}
 	}
 }
 
@@ -537,5 +527,106 @@ func TestFilterMode_FiltersEntries(t *testing.T) {
 	}
 	if !found {
 		t.Error("filter should include matching entry 'bbb'")
+	}
+}
+
+func TestDockerRowNotSelectable(t *testing.T) {
+	m := newKeysTestModel()
+	m.activeTab = tabCaches
+	ct := &m.tabs[tabCaches]
+	ct.allEntries = []Entry{{Name: "Docker (system prune -a)", Path: dockerEntryPath}}
+	ct.entries = ct.allEntries
+	ct.cursor = 0
+
+	updated, _ := m.Update(keyMsg("s"))
+	m2 := updated.(model)
+	if len(m2.tabs[tabCaches].selected) != 0 {
+		t.Error("docker row must not be selectable with s")
+	}
+}
+
+func TestDockerPruneConfirmFlow(t *testing.T) {
+	m := newKeysTestModel()
+	m.activeTab = tabCaches
+	m.skipConfirm = true // -y must be ignored for docker prune
+	ct := &m.tabs[tabCaches]
+	ct.allEntries = []Entry{{Name: "Docker (system prune -a)", Path: dockerEntryPath, Sized: true}}
+	ct.entries = ct.allEntries
+	ct.cursor = 0
+
+	updated, _ := m.Update(keyMsg("d"))
+	m2 := updated.(model)
+	if m2.mode != modeConfirm || !m2.confirmDocker {
+		t.Fatalf("mode=%v confirmDocker=%v, want confirm+docker", m2.mode, m2.confirmDocker)
+	}
+
+	// n cancels and clears the docker flag
+	updated, _ = m2.Update(keyMsg("n"))
+	m3 := updated.(model)
+	if m3.mode != modeNormal || m3.confirmDocker {
+		t.Errorf("after n: mode=%v confirmDocker=%v, want normal+false", m3.mode, m3.confirmDocker)
+	}
+
+	// y returns the prune command; the flag stays set until the prune
+	// finishes (dockerPruneDoneMsg/ErrMsg clear it). Do NOT execute cmd —
+	// it would really run docker prune.
+	updated, cmd := m2.Update(keyMsg("y"))
+	m4 := updated.(model)
+	if cmd == nil {
+		t.Fatal("y must return the docker prune command")
+	}
+	if !m4.confirmDocker || m4.mode != modeConfirm {
+		t.Errorf("after y: mode=%v confirmDocker=%v, want confirm+true until prune completes",
+			m4.mode, m4.confirmDocker)
+	}
+}
+
+func TestDockerPruneReadOnly(t *testing.T) {
+	m := newKeysTestModel()
+	m.readOnly = true
+	m.activeTab = tabCaches
+	ct := &m.tabs[tabCaches]
+	ct.allEntries = []Entry{{Name: "Docker (system prune -a)", Path: dockerEntryPath, Sized: true}}
+	ct.entries = ct.allEntries
+	ct.cursor = 0
+
+	updated, cmd := m.Update(keyMsg("d"))
+	m2 := updated.(model)
+	if m2.mode != modeNormal || m2.confirmDocker || cmd != nil {
+		t.Error("read-only mode must ignore d on the docker row")
+	}
+}
+
+func TestBuildDeleteCmd_ExpandsCacheGroups(t *testing.T) {
+	dir1 := t.TempDir()
+	sub1 := filepath.Join(dir1, "cache-a")
+	sub2 := filepath.Join(dir1, "cache-b")
+	mustMkdir(t, sub1)
+	mustMkdir(t, sub2)
+	mustWriteFile(t, filepath.Join(sub1, "f"), 10)
+	mustWriteFile(t, filepath.Join(sub2, "f"), 10)
+
+	m := newKeysTestModel()
+	m.activeTab = tabCaches
+	m.deleteType = deletePermanent
+	m.cachePathGroups = map[string][]string{sub1: {sub1, sub2}}
+	ct := &m.tabs[tabCaches]
+	ct.allEntries = []Entry{{Name: "grouped cache", Path: sub1, IsDir: true, Size: 20, Sized: true}}
+	ct.entries = ct.allEntries
+	ct.selected = map[string]bool{sub1: true}
+
+	cmd := m.buildDeleteCmd(ct)
+	msg := cmd()
+	done, ok := msg.(deleteDoneMsg)
+	if !ok {
+		t.Fatalf("got %T (%v), want deleteDoneMsg", msg, msg)
+	}
+	if len(done.deleted) != 2 {
+		t.Fatalf("deleted = %v, want both group paths", done.deleted)
+	}
+	for _, p := range []string{sub1, sub2} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s still exists", p)
+		}
 	}
 }

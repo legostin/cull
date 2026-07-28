@@ -55,7 +55,7 @@ const (
 type deleteMode int
 
 const (
-	deleteTrash     deleteMode = iota
+	deleteTrash deleteMode = iota
 	deletePermanent
 )
 
@@ -101,8 +101,9 @@ type trashLoadedMsg struct {
 type tabID int
 
 const (
-	tabBrowse  tabID = iota
+	tabBrowse tabID = iota
 	tabLargest
+	tabCaches
 	tabHistory
 )
 
@@ -133,7 +134,7 @@ type dirCacheEntry struct {
 type model struct {
 	path      string
 	activeTab tabID
-	tabs      [3]tabState
+	tabs      [4]tabState
 	mode      mode
 	width     int
 	height    int
@@ -179,6 +180,11 @@ type model struct {
 
 	// Trash registry
 	trashRegistry *TrashRegistry
+
+	// CACHES tab state
+	cachePathGroups map[string][]string // Entry.Path -> all existing paths of that cache
+	confirmDocker   bool                // confirm dialog is for docker prune
+	cachesNote      string              // status-bar note, e.g. reclaimed space after prune
 
 	// CLI flags
 	readOnly    bool
@@ -415,6 +421,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		tt.offset = 0
 		return m, nil
 
+	case cachesLoadedMsg:
+		ct := &m.tabs[tabCaches]
+		*ct = newTabState()
+		ct.allEntries = msg.entries
+		m.applyFilterForTab(tabCaches)
+		m.cachePathGroups = msg.pathGroups
+		cmds := make([]tea.Cmd, 0, len(msg.entries))
+		for _, e := range msg.entries {
+			if e.Path == dockerEntryPath {
+				cmds = append(cmds, dockerSizeCmd())
+			} else {
+				cmds = append(cmds, cacheSizeCmd(e.Path, msg.pathGroups[e.Path]))
+			}
+		}
+		return m, tea.Batch(cmds...)
+
+	case cacheSizeMsg:
+		m.handleCacheSize(msg)
+		return m, nil
+
+	case dockerPruneDoneMsg:
+		m.mode = modeNormal
+		m.confirmDocker = false
+		m.cachesNote = "docker: reclaimed " + formatSize(msg.reclaimed)
+		return m, dockerSizeCmd()
+
+	case dockerPruneErrMsg:
+		m.mode = modeNormal
+		m.confirmDocker = false
+		m.errMsg = msg.err.Error()
+		return m, nil
+
 	case restoreDoneMsg:
 		m.removeFromTrashTab(msg.restored)
 		if m.trashRegistry != nil {
@@ -500,6 +538,13 @@ func (m model) entryDisplayName(e Entry) string {
 	if m.activeTab == tabHistory && e.Path != "" {
 		name = e.Path
 	}
+	if m.activeTab == tabCaches && e.Path != "" {
+		if e.Path == dockerEntryPath {
+			name = e.Name
+		} else {
+			name = e.Name + " · " + e.Path
+		}
+	}
 	return name
 }
 
@@ -529,8 +574,8 @@ func (m model) handleNameScrollTick(msg nameScrollTickMsg) (tea.Model, tea.Cmd) 
 		return m, nil // no scrolling needed
 	}
 
-	const startPause = 7  // ticks to pause at start (~1s)
-	const endPause = 13   // ticks to pause at end (~2s at 150ms/tick)
+	const startPause = 7 // ticks to pause at start (~1s)
+	const endPause = 13  // ticks to pause at end (~2s at 150ms/tick)
 
 	m.nameScroll++
 	total := startPause + maxOffset + endPause
@@ -929,6 +974,58 @@ func (m *model) loadTrashTab() tea.Cmd {
 			return entries[i].ModTime.After(entries[j].ModTime)
 		})
 		return trashLoadedMsg{entries: entries}
+	}
+}
+
+// handleCacheSize applies a cacheSizeMsg to the CACHES tab: sets the row size
+// (or drops the row when ok=false), re-sorts by size and keeps the cursor on
+// the same entry.
+func (m *model) handleCacheSize(msg cacheSizeMsg) {
+	ct := &m.tabs[tabCaches]
+
+	var cursorPath string
+	if ct.cursor < len(ct.entries) {
+		cursorPath = ct.entries[ct.cursor].Path
+	}
+
+	if msg.ok {
+		for i := range ct.allEntries {
+			if ct.allEntries[i].Path == msg.path {
+				ct.allEntries[i].Size = msg.size
+				ct.allEntries[i].Sized = true
+				break
+			}
+		}
+	} else {
+		filtered := make([]Entry, 0, len(ct.allEntries))
+		for _, e := range ct.allEntries {
+			if e.Path != msg.path {
+				filtered = append(filtered, e)
+			}
+		}
+		ct.allEntries = filtered
+		delete(ct.selected, msg.path)
+	}
+
+	sortEntries(ct.allEntries, sortSizeDesc)
+	m.applyFilterForTab(tabCaches)
+
+	if cursorPath != "" {
+		for i, e := range ct.entries {
+			if e.Path == cursorPath {
+				ct.cursor = i
+				break
+			}
+		}
+	}
+	if ct.cursor >= len(ct.entries) && len(ct.entries) > 0 {
+		ct.cursor = len(ct.entries) - 1
+	}
+	if len(ct.entries) == 0 {
+		ct.cursor = 0
+	}
+	if m.activeTab == tabCaches {
+		m.clampOffset()
 	}
 }
 

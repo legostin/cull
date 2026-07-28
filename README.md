@@ -68,6 +68,10 @@ Switch to permanent mode with `tab` when you're sure. Confirmation dialog keeps 
 
 ![largest files](docs/largest.gif)
 
+### Clear app caches safely
+
+The CACHES tab finds known caches — dev tools (npm, go, cargo, Xcode…), browsers, messengers (Telegram, WhatsApp, Slack, Discord) and popular apps — and lets you trash or delete them. Docker is cleaned via `docker system prune -a -f` with confirmation.
+
 ### Filter by name
 
 Press `f` and type to instantly filter entries. Great for finding files by extension.
@@ -90,7 +94,7 @@ Press `f` and type to instantly filter entries. Great for finding files by exten
 | `h` | Toggle hidden files |
 | `t` | Cycle sort mode (size / name / updated / created) |
 | `tab` | Toggle trash / permanent delete |
-| `shift+tab` | Switch between Browse and Largest tabs |
+| `shift+tab` | Switch tabs (Browse / Largest / Caches / History) |
 | `space` | Quick Look preview (macOS) |
 | `?` | Help |
 | `q` / `ctrl+c` | Quit |

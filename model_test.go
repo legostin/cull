@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,10 +18,10 @@ func newTestModel() model {
 
 func TestNameColWidth(t *testing.T) {
 	tests := []struct {
-		width    int
-		wantMin  int
-		wantMax  int
-		desc     string
+		width   int
+		wantMin int
+		wantMax int
+		desc    string
 	}{
 		{40, 10, 10, "very narrow terminal — clamped to min 10"},
 		{80, 10, 40, "normal terminal"},
@@ -721,5 +723,136 @@ func TestQuickScanDoneMsg(t *testing.T) {
 	}
 	if rm.path != "/tmp/test" {
 		t.Errorf("path = %q, want /tmp/test", rm.path)
+	}
+}
+
+func TestTabCachesID(t *testing.T) {
+	if tabBrowse != 0 || tabLargest != 1 || tabCaches != 2 || tabHistory != 3 {
+		t.Errorf("tab IDs = %d %d %d %d, want 0 1 2 3",
+			tabBrowse, tabLargest, tabCaches, tabHistory)
+	}
+	m := newTestModel()
+	if len(m.tabs) != 4 {
+		t.Errorf("len(tabs) = %d, want 4", len(m.tabs))
+	}
+}
+
+func TestCachesLoadedMsg(t *testing.T) {
+	m := newTestModel()
+	m.activeTab = tabCaches
+	msg := cachesLoadedMsg{
+		entries: []Entry{
+			{Name: "npm cache", Path: "/home/u/.npm/_cacache", IsDir: true},
+			{Name: "Docker (system prune -a)", Path: dockerEntryPath},
+		},
+		pathGroups: map[string][]string{
+			"/home/u/.npm/_cacache": {"/home/u/.npm/_cacache"},
+		},
+	}
+	updated, cmd := m.Update(msg)
+	m2 := updated.(model)
+	ct := m2.tabs[tabCaches]
+	if len(ct.allEntries) != 2 || len(ct.entries) != 2 {
+		t.Fatalf("entries = %d/%d, want 2/2", len(ct.allEntries), len(ct.entries))
+	}
+	if m2.cachePathGroups == nil || len(m2.cachePathGroups["/home/u/.npm/_cacache"]) != 1 {
+		t.Errorf("cachePathGroups not stored: %+v", m2.cachePathGroups)
+	}
+	if cmd == nil {
+		t.Error("expected batch of size commands, got nil")
+	}
+}
+
+func TestCacheSizeMsg(t *testing.T) {
+	m := newTestModel()
+	m.activeTab = tabCaches
+	ct := &m.tabs[tabCaches]
+	ct.allEntries = []Entry{
+		{Name: "small", Path: "/c/small", IsDir: true},
+		{Name: "big", Path: "/c/big", IsDir: true},
+	}
+	ct.entries = ct.allEntries
+
+	updated, _ := m.Update(cacheSizeMsg{path: "/c/big", size: 999, ok: true})
+	m2 := updated.(model)
+	ct2 := m2.tabs[tabCaches]
+	if ct2.entries[0].Path != "/c/big" || ct2.entries[0].Size != 999 || !ct2.entries[0].Sized {
+		t.Errorf("after size msg, first entry = %+v, want /c/big sized 999 first (size-desc)", ct2.entries[0])
+	}
+}
+
+func TestCacheSizeMsg_DropRow(t *testing.T) {
+	m := newTestModel()
+	m.activeTab = tabCaches
+	ct := &m.tabs[tabCaches]
+	ct.allEntries = []Entry{
+		{Name: "npm cache", Path: "/c/npm", IsDir: true},
+		{Name: "Docker (system prune -a)", Path: dockerEntryPath},
+	}
+	ct.entries = ct.allEntries
+
+	updated, _ := m.Update(cacheSizeMsg{path: dockerEntryPath, ok: false})
+	m2 := updated.(model)
+	ct2 := m2.tabs[tabCaches]
+	if len(ct2.allEntries) != 1 || ct2.allEntries[0].Path != "/c/npm" {
+		t.Errorf("docker row not dropped: %+v", ct2.allEntries)
+	}
+}
+
+func TestDockerPruneDoneMsg(t *testing.T) {
+	m := newTestModel()
+	m.activeTab = tabCaches
+	m.mode = modeConfirm
+	m.confirmDocker = true
+	updated, cmd := m.Update(dockerPruneDoneMsg{reclaimed: 4_200_000_000})
+	m2 := updated.(model)
+	if m2.mode != modeNormal || m2.confirmDocker {
+		t.Errorf("mode=%v confirmDocker=%v, want modeNormal+false", m2.mode, m2.confirmDocker)
+	}
+	if m2.cachesNote == "" {
+		t.Error("cachesNote empty, want reclaimed note")
+	}
+	if cmd == nil {
+		t.Error("expected dockerSizeCmd refresh, got nil")
+	}
+}
+
+func TestDockerPruneErrMsg(t *testing.T) {
+	m := newTestModel()
+	m.mode = modeConfirm
+	m.confirmDocker = true
+	updated, _ := m.Update(dockerPruneErrMsg{err: errors.New("daemon down")})
+	m2 := updated.(model)
+	if m2.mode != modeNormal || m2.confirmDocker || m2.errMsg == "" {
+		t.Errorf("mode=%v confirmDocker=%v errMsg=%q, want modeNormal+false with error",
+			m2.mode, m2.confirmDocker, m2.errMsg)
+	}
+}
+
+func TestEntryDisplayName_Caches(t *testing.T) {
+	m := newTestModel()
+	m.activeTab = tabCaches
+	e := Entry{Name: "npm cache", Path: "/home/u/.npm/_cacache", IsDir: true}
+	if got := m.entryDisplayName(e); got != "npm cache · /home/u/.npm/_cacache" {
+		t.Errorf("entryDisplayName = %q", got)
+	}
+	d := Entry{Name: "Docker (system prune -a)", Path: dockerEntryPath}
+	if got := m.entryDisplayName(d); got != "Docker (system prune -a)" {
+		t.Errorf("docker entryDisplayName = %q", got)
+	}
+}
+
+func TestViewConfirm_Docker(t *testing.T) {
+	m := newTestModel()
+	m.activeTab = tabCaches
+	m.mode = modeConfirm
+	m.confirmDocker = true
+	ct := &m.tabs[tabCaches]
+	ct.allEntries = []Entry{{Name: "Docker (system prune -a)", Path: dockerEntryPath, Sized: true}}
+	ct.entries = ct.allEntries
+
+	out := m.View()
+	if !strings.Contains(out, "docker system prune -a -f") {
+		t.Error("confirm dialog must show the exact prune command")
 	}
 }

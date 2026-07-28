@@ -25,7 +25,7 @@ func gradientWave(text string, phase int) string {
 			b.WriteRune(r)
 			continue
 		}
-		idx := ((i + phase) % wl + wl) % wl
+		idx := ((i+phase)%wl + wl) % wl
 		b.WriteString(scanGradientStyles[idx].Render(string(r)))
 	}
 	return b.String()
@@ -194,6 +194,7 @@ func (m model) renderTabBar(contentWidth int) string {
 	tabs := []tabInfo{
 		{tabBrowse, "BROWSE"},
 		{tabLargest, "LARGEST"},
+		{tabCaches, "CACHES"},
 	}
 	if m.trashRegistry != nil && len(m.trashRegistry.Records) > 0 {
 		tabs = append(tabs, tabInfo{tabHistory, "HISTORY"})
@@ -209,6 +210,12 @@ func (m model) renderTabBar(contentWidth int) string {
 		// Show item count for HISTORY tab
 		if ti.id == tabHistory {
 			label += fmt.Sprintf(" (%d)", len(m.trashRegistry.Records))
+		}
+		// Show item count for CACHES tab once scanned
+		if ti.id == tabCaches {
+			if n := len(m.tabs[tabCaches].allEntries); n > 0 {
+				label += fmt.Sprintf(" (%d)", n)
+			}
 		}
 
 		if ti.id == m.activeTab {
@@ -337,6 +344,14 @@ func (m model) View() string {
 			"CREATED",
 			"UPDATED"))
 		b.WriteString(header)
+	case tabCaches:
+		header := headerStyle.Render(fmt.Sprintf("  %*s %9s %4s  %-*s  %-10s  %-10s",
+			barWidth, "",
+			"SIZE▼", "%",
+			nameWidth, "NAME · PATH",
+			"",
+			""))
+		b.WriteString(header)
 	case tabHistory:
 		header := headerStyle.Render(fmt.Sprintf("  %*s %9s %4s  %-*s  %-10s  %-10s",
 			barWidth, "",
@@ -431,6 +446,9 @@ func (m model) View() string {
 			if rel, err := filepath.Rel(m.path, e.Path); err == nil {
 				displayName = rel
 			}
+		}
+		if m.activeTab == tabCaches && e.Path != "" && e.Path != dockerEntryPath {
+			displayName = e.Name + " · " + e.Path
 		}
 
 		var row string
@@ -585,7 +603,9 @@ func (m model) View() string {
 			}
 		}
 		var confirmText string
-		if m.activeTab == tabHistory {
+		if m.confirmDocker {
+			confirmText = "  Run docker system prune -a -f? Removes ALL unused images, stopped containers, networks and build cache. Cannot be restored. [y/n]"
+		} else if m.activeTab == tabHistory {
 			confirmText = fmt.Sprintf("  Purge %d items (%s) permanently? [y/n]", count, formatSize(totalSize))
 		} else if m.deleteType == deleteTrash {
 			confirmText = fmt.Sprintf("  Trash %d items (%s)? [y/n]", count, formatSize(totalSize))
@@ -682,6 +702,18 @@ func (m model) View() string {
 		if !m.readOnly && len(t.selected) > 0 {
 			status += fmt.Sprintf(" · %d selected · %s", len(t.selected), formatSize(totalSelected))
 		}
+		if m.activeTab == tabCaches {
+			var cachesTotal int64
+			for _, e := range t.entries {
+				if e.Sized && e.Path != dockerEntryPath {
+					cachesTotal += e.Size
+				}
+			}
+			status += " · caches total: " + formatSize(cachesTotal)
+			if m.cachesNote != "" {
+				status += " · " + m.cachesNote
+			}
+		}
 		// Mode indicators
 		if !m.showHidden {
 			status += " · hidden:off"
@@ -774,7 +806,7 @@ func (m model) viewHelp(b *strings.Builder, contentWidth int) string {
 		"    enter        enter directory (BROWSE tab)",
 		"    backspace    go to parent directory",
 		"    esc          go to parent directory",
-		"    shift-tab    switch tab (BROWSE / LARGEST / HISTORY)",
+		"    shift-tab    switch tab (BROWSE / LARGEST / CACHES / HISTORY)",
 	}
 	if !m.readOnly {
 		lines = append(lines,
@@ -791,6 +823,11 @@ func (m model) viewHelp(b *strings.Builder, contentWidth int) string {
 			"    r            restore selected items to original location",
 			"    d            permanently delete selected items from trash",
 			"    s            toggle select",
+			"",
+			"  CACHES TAB",
+			"    d            clear selected caches (trash or permanent, tab to toggle)",
+			"    d on Docker  run docker system prune -a -f (always confirms)",
+			"    s            toggle select (Docker row is not selectable)",
 		)
 	}
 	lines = append(lines,
