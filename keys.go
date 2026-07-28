@@ -42,14 +42,18 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "shift+tab":
 		hasHistory := m.trashRegistry != nil && len(m.trashRegistry.Records) > 0
-		numTabs := tabID(2)
+		numTabs := tabID(3)
 		if hasHistory {
-			numTabs = 3
+			numTabs = 4
 		}
 		m.activeTab = (m.activeTab + 1) % numTabs
 		cmd := m.resetNameScroll()
-		if m.activeTab == tabHistory {
+		switch m.activeTab {
+		case tabHistory:
 			return m, tea.Batch(cmd, m.loadTrashTab())
+		case tabCaches:
+			m.cachesNote = ""
+			return m, tea.Batch(cmd, loadCachesCmd())
 		}
 		return m, cmd
 

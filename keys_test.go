@@ -137,26 +137,23 @@ func TestKey_ShiftS_RangeSelect(t *testing.T) {
 	}
 }
 
-func TestKey_ShiftTab_SwitchesTab_TwoTabs(t *testing.T) {
+func TestKey_ShiftTab_SwitchesTab_NoHistory(t *testing.T) {
 	m := newKeysTestModel()
-	// Empty registry → only 2 tabs
+	// Empty registry → 3 tabs (BROWSE / LARGEST / CACHES)
+	m.trashRegistry = &TrashRegistry{}
 	m.activeTab = tabBrowse
 
-	result, _ := m.Update(keyMsg("shift+tab"))
-	rm := result.(model)
-	if rm.activeTab != tabLargest {
-		t.Errorf("activeTab = %d, want tabLargest", rm.activeTab)
-	}
-
-	// Wraps back to browse (no history tab)
-	result, _ = rm.Update(keyMsg("shift+tab"))
-	rm = result.(model)
-	if rm.activeTab != tabBrowse {
-		t.Errorf("activeTab = %d, want tabBrowse", rm.activeTab)
+	want := []tabID{tabLargest, tabCaches, tabBrowse}
+	for _, w := range want {
+		result, _ := m.Update(keyMsg("shift+tab"))
+		m = result.(model)
+		if m.activeTab != w {
+			t.Fatalf("activeTab = %d, want %d", m.activeTab, w)
+		}
 	}
 }
 
-func TestKey_ShiftTab_SwitchesTab_ThreeTabs(t *testing.T) {
+func TestKey_ShiftTab_SwitchesTab_WithHistory(t *testing.T) {
 	m := newKeysTestModel()
 	// Add a record so HISTORY tab appears
 	m.trashRegistry = &TrashRegistry{
@@ -166,22 +163,13 @@ func TestKey_ShiftTab_SwitchesTab_ThreeTabs(t *testing.T) {
 	}
 	m.activeTab = tabBrowse
 
-	result, _ := m.Update(keyMsg("shift+tab"))
-	rm := result.(model)
-	if rm.activeTab != tabLargest {
-		t.Errorf("activeTab = %d, want tabLargest", rm.activeTab)
-	}
-
-	result, _ = rm.Update(keyMsg("shift+tab"))
-	rm = result.(model)
-	if rm.activeTab != tabHistory {
-		t.Errorf("activeTab = %d, want tabHistory", rm.activeTab)
-	}
-
-	result, _ = rm.Update(keyMsg("shift+tab"))
-	rm = result.(model)
-	if rm.activeTab != tabBrowse {
-		t.Errorf("activeTab = %d, want tabBrowse", rm.activeTab)
+	want := []tabID{tabLargest, tabCaches, tabHistory, tabBrowse}
+	for _, w := range want {
+		result, _ := m.Update(keyMsg("shift+tab"))
+		m = result.(model)
+		if m.activeTab != w {
+			t.Fatalf("activeTab = %d, want %d", m.activeTab, w)
+		}
 	}
 }
 

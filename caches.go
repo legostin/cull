@@ -3,12 +3,15 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // cacheKind distinguishes plain directory caches from special entries.
@@ -169,4 +172,79 @@ func sumPathsSize(paths []string) int64 {
 		})
 	}
 	return total
+}
+
+// cachesLoadedMsg is sent when the CACHES tab scan completes.
+type cachesLoadedMsg struct {
+	entries    []Entry
+	pathGroups map[string][]string
+}
+
+// cacheSizeMsg carries the computed size of one cache row.
+// ok=false means the row must be dropped (e.g. docker df failed).
+type cacheSizeMsg struct {
+	path string
+	size int64
+	ok   bool
+}
+
+// dockerPruneDoneMsg is sent after docker system prune succeeds.
+type dockerPruneDoneMsg struct {
+	reclaimed int64
+}
+
+// dockerPruneErrMsg is sent when docker system prune fails.
+type dockerPruneErrMsg struct {
+	err error
+}
+
+// loadCachesCmd scans the platform cache registry and the docker CLI.
+func loadCachesCmd() tea.Cmd {
+	return func() tea.Msg {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return cachesLoadedMsg{}
+		}
+		hits := scanCaches(platformCacheDefs(), home)
+		entries := make([]Entry, 0, len(hits)+1)
+		groups := make(map[string][]string, len(hits))
+		for _, h := range hits {
+			primary := h.Paths[0]
+			entries = append(entries, Entry{Name: h.Def.Name, Path: primary, IsDir: true})
+			groups[primary] = h.Paths
+		}
+		if dockerAvailable() {
+			entries = append(entries, Entry{Name: "Docker (system prune -a)", Path: dockerEntryPath})
+		}
+		return cachesLoadedMsg{entries: entries, pathGroups: groups}
+	}
+}
+
+// cacheSizeCmd computes the total size of one cache row in the background.
+func cacheSizeCmd(primary string, paths []string) tea.Cmd {
+	return func() tea.Msg {
+		return cacheSizeMsg{path: primary, size: sumPathsSize(paths), ok: true}
+	}
+}
+
+// dockerSizeCmd queries docker reclaimable space; on failure the row is dropped.
+func dockerSizeCmd() tea.Cmd {
+	return func() tea.Msg {
+		size, err := dockerReclaimable()
+		if err != nil {
+			return cacheSizeMsg{path: dockerEntryPath, ok: false}
+		}
+		return cacheSizeMsg{path: dockerEntryPath, size: size, ok: true}
+	}
+}
+
+// dockerPruneCmd runs docker system prune -a -f.
+func dockerPruneCmd() tea.Cmd {
+	return func() tea.Msg {
+		out, err := exec.Command("docker", "system", "prune", "-a", "-f").CombinedOutput()
+		if err != nil {
+			return dockerPruneErrMsg{err: fmt.Errorf("docker prune: %v: %s", err, bytes.TrimSpace(out))}
+		}
+		return dockerPruneDoneMsg{reclaimed: parseDockerPruneOutput(string(out))}
+	}
 }
