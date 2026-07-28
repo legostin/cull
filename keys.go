@@ -115,7 +115,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.readOnly {
 			return m, nil
 		}
-		if t.cursor < len(t.entries) && !t.entries[t.cursor].IsParent {
+		if t.cursor < len(t.entries) && !t.entries[t.cursor].IsParent &&
+			t.entries[t.cursor].Path != dockerEntryPath {
 			p := t.entries[t.cursor].Path
 			if t.selected[p] {
 				delete(t.selected, p)
@@ -139,7 +140,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				lo, hi = hi, lo
 			}
 			for i := lo; i <= hi; i++ {
-				if !t.entries[i].IsParent {
+				if !t.entries[i].IsParent && t.entries[i].Path != dockerEntryPath {
 					t.selected[t.entries[i].Path] = true
 				}
 			}
@@ -213,7 +214,16 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Normal delete flow (browse/largest tabs)
+		// On caches tab, cursor on the Docker row triggers the prune flow.
+		// Always confirmed, even with -y: prune is not restorable.
+		if m.activeTab == tabCaches && len(t.selected) == 0 &&
+			t.cursor < len(t.entries) && t.entries[t.cursor].Path == dockerEntryPath {
+			m.mode = modeConfirm
+			m.confirmDocker = true
+			return m, nil
+		}
+
+		// Normal delete flow (browse/largest/caches tabs)
 		if len(t.selected) == 0 && t.cursor < len(t.entries) && !t.entries[t.cursor].IsParent {
 			t.selected[t.entries[t.cursor].Path] = true
 		}
@@ -326,6 +336,13 @@ func (m model) buildDeleteCmd(t *tabState) tea.Cmd {
 		entryMap[e.Path] = e
 	}
 	for p := range t.selected {
+		// On the caches tab a selected row may cover several paths
+		if m.activeTab == tabCaches {
+			if group, ok := m.cachePathGroups[p]; ok {
+				paths = append(paths, group...)
+				continue
+			}
+		}
 		paths = append(paths, p)
 	}
 	useTrash := m.deleteType == deleteTrash
@@ -364,6 +381,12 @@ func (m model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y":
 		t := m.tab()
 
+		// Docker prune: the flag stays set until dockerPruneDoneMsg/ErrMsg
+		// clear it, mirroring how file deletion keeps modeConfirm until done.
+		if m.confirmDocker {
+			return m, dockerPruneCmd()
+		}
+
 		// On trash tab, confirm means purge
 		if m.activeTab == tabHistory {
 			paths := make([]string, 0, len(t.selected))
@@ -390,6 +413,7 @@ func (m model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.buildDeleteCmd(t)
 
 	case "n", "esc":
+		m.confirmDocker = false
 		m.mode = modeNormal
 	}
 
