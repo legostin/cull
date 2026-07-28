@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -75,6 +76,34 @@ func TestSumPathsSize(t *testing.T) {
 	}
 	if got := sumPathsSize([]string{filepath.Join(dir1, "nope")}); got != 0 {
 		t.Errorf("missing path: sumPathsSize = %d, want 0", got)
+	}
+}
+
+func TestPlatformCacheDefs(t *testing.T) {
+	defs := platformCacheDefs()
+	if len(defs) == 0 {
+		t.Fatal("platformCacheDefs returned no defs")
+	}
+	seen := make(map[string]bool)
+	for _, d := range defs {
+		if d.Name == "" {
+			t.Errorf("def with empty Name: %+v", d)
+		}
+		if seen[d.Name] {
+			t.Errorf("duplicate def name %q", d.Name)
+		}
+		seen[d.Name] = true
+		if d.Kind == cacheKindDir && len(d.Paths) == 0 {
+			t.Errorf("%s: cacheKindDir def has no paths", d.Name)
+		}
+		for _, p := range d.Paths {
+			if strings.Contains(p, "**") {
+				t.Errorf("%s: pattern %q uses ** which filepath.Glob does not support", d.Name, p)
+			}
+			if p == "" {
+				t.Errorf("%s: empty path pattern", d.Name)
+			}
+		}
 	}
 }
 
