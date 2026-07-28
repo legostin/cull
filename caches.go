@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -75,6 +79,77 @@ func scanCaches(defs []cacheDef, home string) []cacheHit {
 		}
 	}
 	return hits
+}
+
+// dockerAvailable reports whether the docker CLI is on PATH.
+func dockerAvailable() bool {
+	_, err := exec.LookPath("docker")
+	return err == nil
+}
+
+// parseDockerSize parses docker-style human sizes ("1.5GB (90%)", "500MB",
+// "0B"). Docker uses decimal units. Returns 0 on any parse failure.
+func parseDockerSize(s string) int64 {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, ' '); i >= 0 {
+		s = s[:i] // strip trailing " (90%)"
+	}
+	i := 0
+	for i < len(s) && (s[i] >= '0' && s[i] <= '9' || s[i] == '.') {
+		i++
+	}
+	num, err := strconv.ParseFloat(s[:i], 64)
+	if err != nil {
+		return 0
+	}
+	mult := map[string]float64{"B": 1, "KB": 1e3, "MB": 1e6, "GB": 1e9, "TB": 1e12}
+	m, ok := mult[strings.ToUpper(s[i:])]
+	if !ok {
+		return 0
+	}
+	return int64(num * m)
+}
+
+// parseDockerDF sums the Reclaimable field over `docker system df --format
+// '{{json .}}'` NDJSON output. Unparseable lines are skipped.
+func parseDockerDF(out []byte) int64 {
+	var total int64
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var row struct{ Reclaimable string }
+		if err := json.Unmarshal(line, &row); err != nil {
+			continue
+		}
+		total += parseDockerSize(row.Reclaimable)
+	}
+	return total
+}
+
+// dockerReclaimable queries docker for total reclaimable space.
+func dockerReclaimable() (int64, error) {
+	out, err := exec.Command("docker", "system", "df", "--format", "{{json .}}").Output()
+	if err != nil {
+		return 0, err
+	}
+	return parseDockerDF(out), nil
+}
+
+// parseDockerPruneOutput extracts the freed size from `docker system prune`
+// output ("Total reclaimed space: 4.2GB"). Returns 0 if absent.
+func parseDockerPruneOutput(out string) int64 {
+	const marker = "Total reclaimed space:"
+	i := strings.LastIndex(out, marker)
+	if i < 0 {
+		return 0
+	}
+	rest := out[i+len(marker):]
+	if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+		rest = rest[:nl]
+	}
+	return parseDockerSize(rest)
 }
 
 // sumPathsSize walks all paths and sums regular-file sizes. Errors are skipped.

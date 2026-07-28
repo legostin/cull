@@ -107,6 +107,54 @@ func TestPlatformCacheDefs(t *testing.T) {
 	}
 }
 
+func TestParseDockerSize(t *testing.T) {
+	tests := []struct {
+		in   string
+		want int64
+	}{
+		{"0B", 0},
+		{"500B", 500},
+		{"1.5kB", 1500},
+		{"500MB", 500_000_000},
+		{"1.5GB (90%)", 1_500_000_000},
+		{"2TB", 2_000_000_000_000},
+		{"  1.234GB  ", 1_234_000_000},
+		{"garbage", 0},
+		{"", 0},
+	}
+	for _, tt := range tests {
+		if got := parseDockerSize(tt.in); got != tt.want {
+			t.Errorf("parseDockerSize(%q) = %d, want %d", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestParseDockerDF(t *testing.T) {
+	out := []byte(`{"Type":"Images","Reclaimable":"1.5GB (90%)"}
+{"Type":"Containers","Reclaimable":"0B"}
+{"Type":"Local Volumes","Reclaimable":"500MB (100%)"}
+{"Type":"Build Cache","Reclaimable":"2GB"}
+not json line
+`)
+	want := int64(1_500_000_000 + 0 + 500_000_000 + 2_000_000_000)
+	if got := parseDockerDF(out); got != want {
+		t.Errorf("parseDockerDF = %d, want %d", got, want)
+	}
+	if got := parseDockerDF(nil); got != 0 {
+		t.Errorf("parseDockerDF(nil) = %d, want 0", got)
+	}
+}
+
+func TestParseDockerPruneOutput(t *testing.T) {
+	out := "Deleted Containers:\nabc123\n\nDeleted Images:\ndef456\n\nTotal reclaimed space: 4.2GB\n"
+	if got := parseDockerPruneOutput(out); got != 4_200_000_000 {
+		t.Errorf("parseDockerPruneOutput = %d, want 4200000000", got)
+	}
+	if got := parseDockerPruneOutput("no totals here"); got != 0 {
+		t.Errorf("no-total case = %d, want 0", got)
+	}
+}
+
 func mustMkdir(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0o755); err != nil {
