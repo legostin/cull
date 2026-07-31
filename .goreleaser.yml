@@ -2,6 +2,7 @@ version: 2
 
 release:
   mode: replace
+  replace_existing_artifacts: true
 
 builds:
   - binary: cull
