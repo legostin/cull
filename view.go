@@ -866,7 +866,7 @@ func (m model) viewHelp(b *strings.Builder, contentWidth int) string {
 		"    enter        enter directory (BROWSE tab)",
 		"    backspace    go to parent directory",
 		"    esc          go to parent directory",
-		"    shift-tab    switch tab (BROWSE / LARGEST / CACHES / HISTORY)",
+		"    shift-tab    switch tab (BROWSE / LARGEST / CACHES / HISTORY / PROJECTS)",
 	}
 	if !m.readOnly {
 		lines = append(lines,
@@ -888,6 +888,11 @@ func (m model) viewHelp(b *strings.Builder, contentWidth int) string {
 			"    d            clear selected caches (trash or permanent, tab to toggle)",
 			"    d on Docker  run docker system prune -a -f (always confirms)",
 			"    s            toggle select (Docker row is not selectable)",
+			"",
+			"  PROJECTS TAB",
+			"    r            rescan projects",
+			"    t            toggle sort: size / idle",
+			"    d            delete selected artifacts (trash or permanent)",
 		)
 	}
 	lines = append(lines,
@@ -895,7 +900,7 @@ func (m model) viewHelp(b *strings.Builder, contentWidth int) string {
 		"  DISPLAY",
 		"    f            open filter prompt (type to filter, enter to apply, esc to clear)",
 		"    h            toggle hidden files",
-		"    t            cycle sort mode: size / name / updated / created (BROWSE tab)",
+		"    t            cycle sort mode: size / name / updated / created (BROWSE tab); size / idle (PROJECTS tab)",
 		"    space        Quick Look preview (macOS)",
 		"",
 		"  OTHER",

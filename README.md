@@ -72,6 +72,10 @@ Switch to permanent mode with `tab` when you're sure. Confirmation dialog keeps 
 
 The CACHES tab finds known caches — dev tools (npm, go, cargo, Xcode…), browsers, messengers (Telegram, WhatsApp, Slack, Discord) and popular apps — and lets you trash or delete them. Docker is cleaned via `docker system prune -a -f` with confirmation.
 
+### Reclaim build artifacts from old projects
+
+The PROJECTS tab scans down from the launch path for project build artifacts — `node_modules`, Rust `target/`, Python `.venv`, Gradle `build/`, Go/PHP `vendor/`, CocoaPods, Terraform and more. Each row shows the artifact size and how long the project has been untouched; projects idle for 6+ months are highlighted green as safe to clean. Artifacts are matched only next to their project marker file (`package.json`, `Cargo.toml`, `go.mod`, …), so an unrelated `build/` directory is never touched.
+
 ### Filter by name
 
 Press `f` and type to instantly filter entries. Great for finding files by extension.
@@ -92,9 +96,10 @@ Press `f` and type to instantly filter entries. Great for finding files by exten
 | `e` | Dry-run preview |
 | `f` | Filter by name |
 | `h` | Toggle hidden files |
-| `t` | Cycle sort mode (size / name / updated / created) |
+| `t` | Cycle sort mode (size / name / updated / created); size / idle on Projects |
+| `r` | Rescan (Projects) / restore (History) |
 | `tab` | Toggle trash / permanent delete |
-| `shift+tab` | Switch tabs (Browse / Largest / Caches / History) |
+| `shift+tab` | Switch tabs (Browse / Largest / Caches / History / Projects) |
 | `space` | Quick Look preview (macOS) |
 | `?` | Help |
 | `q` / `ctrl+c` | Quit |
