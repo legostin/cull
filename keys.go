@@ -39,6 +39,45 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	t := m.tab()
 
+	// Map-mode key handling on BROWSE: spatial movement + enter semantics.
+	if m.activeTab == tabBrowse && m.browseMap {
+		var dx, dy int
+		switch msg.String() {
+		case "h", "left":
+			dx = -1
+		case "l", "right":
+			dx = 1
+		case "j", "down":
+			dy = 1
+		case "k", "up":
+			dy = -1
+		case "S":
+			return m, nil // no linear order on the map
+		case "enter":
+			rects := m.browseMapLayout()
+			if len(rects) == 0 {
+				return m, nil
+			}
+			if rects[m.mapCursorRect(rects)].Index == -1 {
+				m.browseMap = false // +N more: back to the list
+				return m, nil
+			}
+			// fall through to the normal enter handling below
+		}
+		if dx != 0 || dy != 0 {
+			rects := m.browseMapLayout()
+			if len(rects) == 0 {
+				return m, nil
+			}
+			cur := m.mapCursorRect(rects)
+			next := nearestRect(rects, cur, dx, dy)
+			if idx := rects[next].Index; idx >= 0 {
+				t.cursor = idx
+			}
+			return m, m.resetNameScroll()
+		}
+	}
+
 	switch msg.String() {
 	case "shift+tab":
 		order := []tabID{tabBrowse, tabLargest, tabCaches, tabProjects}
@@ -262,6 +301,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd.Stdout = nil
 			cmd.Stderr = nil
 			cmd.Start()
+		}
+
+	case "m":
+		if m.activeTab == tabBrowse {
+			m.browseMap = !m.browseMap
 		}
 
 	case "f":

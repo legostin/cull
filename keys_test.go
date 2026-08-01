@@ -699,3 +699,56 @@ func TestKey_T_ProjectsSortToggle(t *testing.T) {
 		t.Error("size sort must put biggest artifact first")
 	}
 }
+
+func TestKey_M_TogglesMapOnBrowseOnly(t *testing.T) {
+	m := newKeysTestModel()
+	result, _ := m.Update(keyMsg("m"))
+	if !result.(model).browseMap {
+		t.Fatal("m must enable map mode on BROWSE")
+	}
+	result2, _ := result.(model).Update(keyMsg("m"))
+	if result2.(model).browseMap {
+		t.Fatal("second m must disable map mode")
+	}
+	m2 := newKeysTestModel()
+	m2.activeTab = tabCaches
+	result3, _ := m2.Update(keyMsg("m"))
+	if result3.(model).browseMap {
+		t.Error("m must be a no-op outside BROWSE")
+	}
+}
+
+func TestKey_MapMode_SpatialMove(t *testing.T) {
+	m := newKeysTestModel() // aaa 300, bbb 200, ccc 100 + parent
+	m.browseMap = true
+	for i := range m.tab().allEntries {
+		m.tab().allEntries[i].Sized = true
+	}
+	m.tab().entries = append([]Entry{}, m.tab().allEntries...)
+	m.tab().cursor = 1 // aaa — largest, leftmost rect
+	result, _ := m.Update(keyMsg("l"))
+	rm := result.(model)
+	if rm.tab().cursor == 1 {
+		t.Error("l must move cursor spatially to a neighbor rect")
+	}
+	if rm.tab().entries[rm.tab().cursor].IsParent {
+		t.Error("cursor must never land on the parent entry")
+	}
+}
+
+func TestKey_MapMode_EnterOnCollapsedReturnsToList(t *testing.T) {
+	m := newKeysTestModel()
+	m.browseMap = true
+	m.width, m.height = 42, 21 // small content area forces collapsing
+	tab := m.tab()
+	tab.allEntries = []Entry{{Name: "big", Path: "/tmp/test/big", Size: 1 << 30, Sized: true, IsDir: true}}
+	for i := 0; i < 30; i++ {
+		tab.allEntries = append(tab.allEntries, Entry{Name: "tiny", Path: "/tmp/test/t", Size: 1, Sized: true})
+	}
+	tab.entries = append([]Entry{}, tab.allEntries...)
+	tab.cursor = len(tab.entries) - 1 // a collapsed tiny entry
+	result, _ := m.Update(specialKeyMsg(tea.KeyEnter))
+	if result.(model).browseMap {
+		t.Error("enter on the +N more rect must return to list view")
+	}
+}

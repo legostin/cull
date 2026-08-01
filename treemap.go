@@ -153,3 +153,30 @@ func nearestRect(rects []mapRect, cur, dx, dy int) int {
 	}
 	return best
 }
+
+// browseMapLayout computes the treemap layout for the BROWSE tab at the
+// current terminal size (same content area as the list rows).
+func (m *model) browseMapLayout() []mapRect {
+	w := m.width - 2
+	h := m.height - 11
+	if w < 1 || h < 1 {
+		return nil
+	}
+	return layoutTreemap(m.tabs[tabBrowse].entries, w, h)
+}
+
+// mapCursorRect returns the index in rects of the cursor's rectangle: the
+// rect with Index == cursor, else the "+N more" rect, else 0.
+func (m *model) mapCursorRect(rects []mapRect) int {
+	cur := m.tabs[tabBrowse].cursor
+	moreIdx := 0
+	for i, r := range rects {
+		if r.Index == cur {
+			return i
+		}
+		if r.Index == -1 {
+			moreIdx = i
+		}
+	}
+	return moreIdx
+}

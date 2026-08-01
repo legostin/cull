@@ -144,6 +144,9 @@ type model struct {
 	// Hidden files toggle
 	showHidden bool
 
+	// BROWSE shows treemap instead of list
+	browseMap bool
+
 	// Sort mode
 	sortBy sortMode
 
