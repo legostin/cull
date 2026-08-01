@@ -41,11 +41,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "shift+tab":
-		order := []tabID{tabBrowse, tabLargest, tabCaches}
+		order := []tabID{tabBrowse, tabLargest, tabCaches, tabProjects}
 		if m.trashRegistry != nil && len(m.trashRegistry.Records) > 0 {
 			order = append(order, tabHistory)
 		}
-		order = append(order, tabProjects)
 		idx := 0
 		for i, id := range order {
 			if id == m.activeTab {

@@ -196,10 +196,10 @@ func (m model) renderTabBar(contentWidth int) string {
 		{tabLargest, "LARGEST"},
 		{tabCaches, "CACHES"},
 	}
+	tabs = append(tabs, tabInfo{tabProjects, "PROJECTS"})
 	if m.trashRegistry != nil && len(m.trashRegistry.Records) > 0 {
 		tabs = append(tabs, tabInfo{tabHistory, "HISTORY"})
 	}
-	tabs = append(tabs, tabInfo{tabProjects, "PROJECTS"})
 
 	var parts []string
 	for _, ti := range tabs {
@@ -866,7 +866,7 @@ func (m model) viewHelp(b *strings.Builder, contentWidth int) string {
 		"    enter        enter directory (BROWSE tab)",
 		"    backspace    go to parent directory",
 		"    esc          go to parent directory",
-		"    shift-tab    switch tab (BROWSE / LARGEST / CACHES / HISTORY / PROJECTS)",
+		"    shift-tab    switch tab (BROWSE / LARGEST / CACHES / PROJECTS / HISTORY)",
 	}
 	if !m.readOnly {
 		lines = append(lines,
@@ -879,11 +879,6 @@ func (m model) viewHelp(b *strings.Builder, contentWidth int) string {
 			"    tab          toggle trash / permanent delete mode",
 			"    y / n        confirm / cancel deletion",
 			"",
-			"  HISTORY TAB",
-			"    r            restore selected items to original location",
-			"    d            permanently delete selected items from trash",
-			"    s            toggle select",
-			"",
 			"  CACHES TAB",
 			"    d            clear selected caches (trash or permanent, tab to toggle)",
 			"    d on Docker  run docker system prune -a -f (always confirms)",
@@ -893,6 +888,11 @@ func (m model) viewHelp(b *strings.Builder, contentWidth int) string {
 			"    r            rescan projects",
 			"    t            toggle sort: size / idle",
 			"    d            delete selected artifacts (trash or permanent)",
+			"",
+			"  HISTORY TAB",
+			"    r            restore selected items to original location",
+			"    d            permanently delete selected items from trash",
+			"    s            toggle select",
 		)
 	}
 	lines = append(lines,

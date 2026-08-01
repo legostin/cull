@@ -165,7 +165,7 @@ func TestKey_ShiftTab_SwitchesTab_WithHistory(t *testing.T) {
 	}
 	m.activeTab = tabBrowse
 
-	want := []tabID{tabLargest, tabCaches, tabHistory, tabProjects, tabBrowse}
+	want := []tabID{tabLargest, tabCaches, tabProjects, tabHistory, tabBrowse}
 	for _, w := range want {
 		result, _ := m.Update(keyMsg("shift+tab"))
 		m = result.(model)

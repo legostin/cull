@@ -99,7 +99,7 @@ Press `f` and type to instantly filter entries. Great for finding files by exten
 | `t` | Cycle sort mode (size / name / updated / created); size / idle on Projects |
 | `r` | Rescan (Projects) / restore (History) |
 | `tab` | Toggle trash / permanent delete |
-| `shift+tab` | Switch tabs (Browse / Largest / Caches / History / Projects) |
+| `shift+tab` | Switch tabs (Browse / Largest / Caches / Projects / History) |
 | `space` | Quick Look preview (macOS) |
 | `?` | Help |
 | `q` / `ctrl+c` | Quit |
