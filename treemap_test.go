@@ -89,3 +89,23 @@ func TestLayoutTreemapEdgeCases(t *testing.T) {
 		t.Errorf("parent must be skipped: %+v", p)
 	}
 }
+
+func TestNearestRect(t *testing.T) {
+	// 2×2 grid of equal rects
+	rs := []mapRect{
+		{X: 0, Y: 0, W: 10, H: 5, Index: 0},
+		{X: 10, Y: 0, W: 10, H: 5, Index: 1},
+		{X: 0, Y: 5, W: 10, H: 5, Index: 2},
+		{X: 10, Y: 5, W: 10, H: 5, Index: 3},
+	}
+	cases := []struct{ from, dx, dy, want int }{
+		{0, 1, 0, 1}, {0, 0, 1, 2}, {3, -1, 0, 2}, {3, 0, -1, 1},
+		{0, -1, 0, 0}, // no neighbor left: stay
+		{1, 0, -1, 1}, // no neighbor up: stay
+	}
+	for _, c := range cases {
+		if got := nearestRect(rs, c.from, c.dx, c.dy); got != c.want {
+			t.Errorf("from %d dir(%d,%d): got %d, want %d", c.from, c.dx, c.dy, got, c.want)
+		}
+	}
+}

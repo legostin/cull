@@ -116,3 +116,40 @@ func splitTreemap(items []treemapItem, w, h, x, y int, out *[]mapRect) {
 		splitTreemap(items[k:], w, h-lh, x, y+lh, out)
 	}
 }
+
+// nearestRect returns the index (into rects) of the closest rectangle whose
+// center lies in direction (dx,dy) from rects[cur], or cur when none exists.
+// Off-axis distance is doubled so movement feels axis-aligned.
+func nearestRect(rects []mapRect, cur, dx, dy int) int {
+	if cur < 0 || cur >= len(rects) {
+		return cur
+	}
+	cx := rects[cur].X*2 + rects[cur].W // centers ×2 to stay integral
+	cy := rects[cur].Y*2 + rects[cur].H
+	best, bestDist := cur, 1<<62
+	for i, r := range rects {
+		if i == cur {
+			continue
+		}
+		rx := r.X*2 + r.W
+		ry := r.Y*2 + r.H
+		if dx > 0 && rx <= cx || dx < 0 && rx >= cx || dy > 0 && ry <= cy || dy < 0 && ry >= cy {
+			continue
+		}
+		major := (rx-cx)*dx + (ry-cy)*dy
+		var minor int
+		if dx != 0 {
+			minor = ry - cy
+		} else {
+			minor = rx - cx
+		}
+		if minor < 0 {
+			minor = -minor
+		}
+		d := major + 2*minor
+		if d < bestDist {
+			best, bestDist = i, d
+		}
+	}
+	return best
+}
