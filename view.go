@@ -338,6 +338,10 @@ func (m model) View() string {
 	// Header
 	switch m.activeTab {
 	case tabBrowse:
+		if m.browseMap {
+			b.WriteString(headerStyle.Render("  MAP · h/j/k/l move · enter zoom in · esc up · m back to list"))
+			break
+		}
 		header := headerStyle.Render(fmt.Sprintf("  %*s %9s %4s  %-*s  %-10s  %-10s",
 			barWidth, "",
 			sizeHeaderLabel(m.sortBy), "%",
@@ -404,233 +408,240 @@ func (m model) View() string {
 		end = len(t.entries)
 	}
 
-	// Empty-state message for LARGEST tab during scan
-	if m.activeTab == tabLargest && len(t.entries) == 0 && m.deepScanning {
-		b.WriteString(scanningStyle.Render("  Walking directory tree…"))
-		b.WriteString("\n")
-	}
+	// Treemap replaces the row list on BROWSE when map mode is on.
+	if m.activeTab == tabBrowse && m.browseMap {
+		b.WriteString(m.renderMap(contentWidth, visibleRows))
+	} else {
 
-	// Empty-state messages for PROJECTS tab
-	if m.activeTab == tabProjects && len(t.entries) == 0 {
-		if m.projectsScanning {
-			b.WriteString(scanningStyle.Render("  Scanning projects…"))
-			b.WriteString("\n")
-		} else if m.projectsLoaded {
-			root := strings.Join(m.projectsRoots, ", ")
-			b.WriteString(staleStyle.Render("  no projects found under " + root + "; run cull from your projects directory"))
+		// Empty-state message for LARGEST tab during scan
+		if m.activeTab == tabLargest && len(t.entries) == 0 && m.deepScanning {
+			b.WriteString(scanningStyle.Render("  Walking directory tree…"))
 			b.WriteString("\n")
 		}
-	}
 
-	for i := offset; i < end; i++ {
-		e := t.entries[i]
-		isCursor := i == t.cursor
-		isSelected := t.selected[e.Path]
+		// Empty-state messages for PROJECTS tab
+		if m.activeTab == tabProjects && len(t.entries) == 0 {
+			if m.projectsScanning {
+				b.WriteString(scanningStyle.Render("  Scanning projects…"))
+				b.WriteString("\n")
+			} else if m.projectsLoaded {
+				root := strings.Join(m.projectsRoots, ", ")
+				b.WriteString(staleStyle.Render("  no projects found under " + root + "; run cull from your projects directory"))
+				b.WriteString("\n")
+			}
+		}
 
-		// Parent entry (..)
-		if e.IsParent {
-			pad := strings.Repeat(" ", barWidth)
+		for i := offset; i < end; i++ {
+			e := t.entries[i]
+			isCursor := i == t.cursor
+			isSelected := t.selected[e.Path]
+
+			// Parent entry (..)
+			if e.IsParent {
+				pad := strings.Repeat(" ", barWidth)
+				if isCursor {
+					plain := fmt.Sprintf("  %s %9s %4s  %-*s  %10s  %10s", pad, "", "", nameWidth, "..", "", "")
+					row := cursorStyle.Width(contentWidth).Render(plain)
+					b.WriteString(row)
+				} else {
+					b.WriteString(fmt.Sprintf("  %s %9s %4s  %-*s  %10s  %10s", pad, "", "", nameWidth, dirStyle.Render(".."), "", ""))
+				}
+				b.WriteString("\n")
+				continue
+			}
+
+			pending := !e.Sized
+
+			var sizeFormatted string
+			if pending {
+				sizeFormatted = "..."
+			} else {
+				sizeFormatted = formatSize(e.Size)
+			}
+
+			name := e.Name
+			if e.IsSymlink {
+				name += " →"
+			} else if e.IsDir {
+				name += "/"
+			}
+
+			isActiveScanning := m.deepScanning && !e.IsParent && e.IsDir && m.deepScanDirs[e.Path]
+			isUnsized := !e.IsParent && e.IsDir && !e.Sized
+
+			markerText := "  "
+			if isSelected {
+				markerText = "● "
+			}
+
+			// Build proportion bar
+			var bar string
+			if e.Sized {
+				bar = proportionBar(e.Size, maxSize, barWidth)
+			} else {
+				bar = strings.Repeat(" ", barWidth)
+			}
+
+			createdStr := formatDate(e.CreateTime)
+			updatedStr := formatDate(e.ModTime)
+
+			displayName := name
+			if m.activeTab == tabLargest && e.Path != "" {
+				if rel, err := filepath.Rel(m.path, e.Path); err == nil {
+					displayName = rel
+				}
+			}
+			if m.activeTab == tabCaches && e.Path != "" && e.Path != dockerEntryPath {
+				displayName = e.Name + " · " + e.Path
+			}
+			if m.activeTab == tabProjects && e.Path != "" {
+				displayName = m.projectsDisplayName(e)
+			}
+
+			var row string
 			if isCursor {
-				plain := fmt.Sprintf("  %s %9s %4s  %-*s  %10s  %10s", pad, "", "", nameWidth, "..", "", "")
-				row := cursorStyle.Width(contentWidth).Render(plain)
-				b.WriteString(row)
+				dn := displayName
+				if isActiveScanning {
+					dn = dn + " ◐"
+				}
+				if e.Stale {
+					dn = dn + " (gone)"
+				}
+				// Marquee: scroll long names under cursor
+				nameRunes := []rune(dn)
+				if len(nameRunes) > nameWidth {
+					off := m.nameScrollOffset(len(nameRunes), nameWidth)
+					dn = marqueeSlice(dn, nameWidth, off)
+				}
+				// Use plain bar (no ANSI) so cursorStyle controls fg/bg uniformly
+				var plainBar string
+				if e.Sized {
+					plainBar = proportionBarPlain(e.Size, maxSize, barWidth)
+				} else {
+					plainBar = strings.Repeat(" ", barWidth)
+				}
+				pctStr := formatPercent(e.Size, totalSize)
+				plain := fmt.Sprintf("%s%s %9s %4s  %-*s  %-10s  %-10s", markerText, plainBar, sizeFormatted, pctStr, nameWidth, dn, createdStr, updatedStr)
+				row = cursorStyle.Width(contentWidth).Render(plain)
+			} else if e.Stale {
+				// Stale history entry — render entire row in dim gray
+				emptyBar := strings.Repeat(" ", barWidth)
+				truncName := truncateName(displayName+" (gone)", nameWidth)
+				plain := fmt.Sprintf("%s%s %9s %4s  %-*s  %-10s  %-10s",
+					markerText, emptyBar, sizeFormatted, "", nameWidth, truncName, createdStr, updatedStr)
+				row = staleStyle.Render(plain)
+			} else if m.activeTab == tabProjects && isIdleSafe(e) {
+				// Long-idle project — whole row in green: safe to clean
+				plainBar := strings.Repeat(" ", barWidth)
+				if e.Sized {
+					plainBar = proportionBarPlain(e.Size, maxSize, barWidth)
+				}
+				truncName := truncateName(displayName, nameWidth)
+				pctStr := formatPercent(e.Size, totalSize)
+				plain := fmt.Sprintf("%s%s %9s %4s  %-*s  %-10s  %-10s",
+					markerText, plainBar, sizeFormatted, pctStr, nameWidth, truncName, createdStr, updatedStr)
+				row = idleRowStyle.Render(plain)
+			} else if isActiveScanning {
+				// Gradient wave on bar + size + pct only; name/dates use normal styles
+				var plainBar string
+				if e.Sized {
+					plainBar = proportionBarPlain(e.Size, maxSize, barWidth)
+				} else {
+					plainBar = strings.Repeat(" ", barWidth)
+				}
+				pctStr := formatPercent(e.Size, totalSize)
+				animatedPart := gradientWave(
+					fmt.Sprintf("%s %9s %4s", plainBar, sizeFormatted, pctStr),
+					m.scanAnimPhase,
+				)
+
+				// Name — use standard styles during scan
+				truncName := truncateName(displayName+" ◐", nameWidth)
+				var styledName string
+				if e.IsSymlink {
+					styledName = symlinkStyle.Render(truncName)
+				} else if e.IsDir {
+					nameStyleLocal := dirStyle
+					if isUnsized {
+						nameStyleLocal = dirUnsizedStyle
+					}
+					styledName = nameStyleLocal.Render(truncName)
+				} else {
+					styledName = truncName
+				}
+				namePad := nameWidth - lipgloss.Width(styledName)
+				if namePad < 0 {
+					namePad = 0
+				}
+
+				created := dateStyle.Render(createdStr)
+				updated := dateStyle.Render(updatedStr)
+				marker := markerText
+				if isSelected {
+					marker = selectedMarkerStyle.Render(markerText)
+				}
+
+				row = fmt.Sprintf("%s%s  %s%s  %s  %s",
+					marker, animatedPart, styledName, strings.Repeat(" ", namePad), created, updated)
 			} else {
-				b.WriteString(fmt.Sprintf("  %s %9s %4s  %-*s  %10s  %10s", pad, "", "", nameWidth, dirStyle.Render(".."), "", ""))
+				marker := markerText
+				if isSelected {
+					marker = selectedMarkerStyle.Render(markerText)
+				}
+
+				sizeCol := sizeStyleFor(e.Size)
+				var size string
+				if pending {
+					size = sizePendingStyle.Render(sizeFormatted)
+				} else {
+					size = sizeCol.Render(sizeFormatted)
+				}
+
+				var pct string
+				if pending {
+					pct = sizePendingStyle.Width(4).Render("")
+				} else {
+					pct = sizeCol.Width(4).Render(formatPercent(e.Size, totalSize))
+				}
+
+				created := dateStyle.Render(createdStr)
+				updated := dateStyle.Render(updatedStr)
+
+				// Truncate name for non-cursor rows
+				truncName := truncateName(displayName, nameWidth)
+
+				if e.IsSymlink {
+					styledName := symlinkStyle.Render(truncName)
+					namePad := nameWidth - lipgloss.Width(styledName)
+					if namePad < 0 {
+						namePad = 0
+					}
+					row = fmt.Sprintf("%s%s %s %s  %s%s  %s  %s", marker, bar, size, pct, styledName, strings.Repeat(" ", namePad), created, updated)
+				} else if e.IsDir {
+					nameStyleLocal := dirStyle
+					if isUnsized {
+						nameStyleLocal = dirUnsizedStyle
+					}
+					styledName := nameStyleLocal.Render(truncName)
+					namePad := nameWidth - lipgloss.Width(styledName)
+					if namePad < 0 {
+						namePad = 0
+					}
+					row = fmt.Sprintf("%s%s %s %s  %s%s  %s  %s", marker, bar, size, pct, styledName, strings.Repeat(" ", namePad), created, updated)
+				} else {
+					row = fmt.Sprintf("%s%s %s %s  %-*s  %s  %s", marker, bar, size, pct, nameWidth, truncName, created, updated)
+				}
 			}
+
+			b.WriteString(row)
 			b.WriteString("\n")
-			continue
 		}
 
-		pending := !e.Sized
-
-		var sizeFormatted string
-		if pending {
-			sizeFormatted = "..."
-		} else {
-			sizeFormatted = formatSize(e.Size)
+		// Pad remaining space
+		for i := end - offset; i < visibleRows; i++ {
+			b.WriteString("\n")
 		}
 
-		name := e.Name
-		if e.IsSymlink {
-			name += " →"
-		} else if e.IsDir {
-			name += "/"
-		}
-
-		isActiveScanning := m.deepScanning && !e.IsParent && e.IsDir && m.deepScanDirs[e.Path]
-		isUnsized := !e.IsParent && e.IsDir && !e.Sized
-
-		markerText := "  "
-		if isSelected {
-			markerText = "● "
-		}
-
-		// Build proportion bar
-		var bar string
-		if e.Sized {
-			bar = proportionBar(e.Size, maxSize, barWidth)
-		} else {
-			bar = strings.Repeat(" ", barWidth)
-		}
-
-		createdStr := formatDate(e.CreateTime)
-		updatedStr := formatDate(e.ModTime)
-
-		displayName := name
-		if m.activeTab == tabLargest && e.Path != "" {
-			if rel, err := filepath.Rel(m.path, e.Path); err == nil {
-				displayName = rel
-			}
-		}
-		if m.activeTab == tabCaches && e.Path != "" && e.Path != dockerEntryPath {
-			displayName = e.Name + " · " + e.Path
-		}
-		if m.activeTab == tabProjects && e.Path != "" {
-			displayName = m.projectsDisplayName(e)
-		}
-
-		var row string
-		if isCursor {
-			dn := displayName
-			if isActiveScanning {
-				dn = dn + " ◐"
-			}
-			if e.Stale {
-				dn = dn + " (gone)"
-			}
-			// Marquee: scroll long names under cursor
-			nameRunes := []rune(dn)
-			if len(nameRunes) > nameWidth {
-				off := m.nameScrollOffset(len(nameRunes), nameWidth)
-				dn = marqueeSlice(dn, nameWidth, off)
-			}
-			// Use plain bar (no ANSI) so cursorStyle controls fg/bg uniformly
-			var plainBar string
-			if e.Sized {
-				plainBar = proportionBarPlain(e.Size, maxSize, barWidth)
-			} else {
-				plainBar = strings.Repeat(" ", barWidth)
-			}
-			pctStr := formatPercent(e.Size, totalSize)
-			plain := fmt.Sprintf("%s%s %9s %4s  %-*s  %-10s  %-10s", markerText, plainBar, sizeFormatted, pctStr, nameWidth, dn, createdStr, updatedStr)
-			row = cursorStyle.Width(contentWidth).Render(plain)
-		} else if e.Stale {
-			// Stale history entry — render entire row in dim gray
-			emptyBar := strings.Repeat(" ", barWidth)
-			truncName := truncateName(displayName+" (gone)", nameWidth)
-			plain := fmt.Sprintf("%s%s %9s %4s  %-*s  %-10s  %-10s",
-				markerText, emptyBar, sizeFormatted, "", nameWidth, truncName, createdStr, updatedStr)
-			row = staleStyle.Render(plain)
-		} else if m.activeTab == tabProjects && isIdleSafe(e) {
-			// Long-idle project — whole row in green: safe to clean
-			plainBar := strings.Repeat(" ", barWidth)
-			if e.Sized {
-				plainBar = proportionBarPlain(e.Size, maxSize, barWidth)
-			}
-			truncName := truncateName(displayName, nameWidth)
-			pctStr := formatPercent(e.Size, totalSize)
-			plain := fmt.Sprintf("%s%s %9s %4s  %-*s  %-10s  %-10s",
-				markerText, plainBar, sizeFormatted, pctStr, nameWidth, truncName, createdStr, updatedStr)
-			row = idleRowStyle.Render(plain)
-		} else if isActiveScanning {
-			// Gradient wave on bar + size + pct only; name/dates use normal styles
-			var plainBar string
-			if e.Sized {
-				plainBar = proportionBarPlain(e.Size, maxSize, barWidth)
-			} else {
-				plainBar = strings.Repeat(" ", barWidth)
-			}
-			pctStr := formatPercent(e.Size, totalSize)
-			animatedPart := gradientWave(
-				fmt.Sprintf("%s %9s %4s", plainBar, sizeFormatted, pctStr),
-				m.scanAnimPhase,
-			)
-
-			// Name — use standard styles during scan
-			truncName := truncateName(displayName+" ◐", nameWidth)
-			var styledName string
-			if e.IsSymlink {
-				styledName = symlinkStyle.Render(truncName)
-			} else if e.IsDir {
-				nameStyleLocal := dirStyle
-				if isUnsized {
-					nameStyleLocal = dirUnsizedStyle
-				}
-				styledName = nameStyleLocal.Render(truncName)
-			} else {
-				styledName = truncName
-			}
-			namePad := nameWidth - lipgloss.Width(styledName)
-			if namePad < 0 {
-				namePad = 0
-			}
-
-			created := dateStyle.Render(createdStr)
-			updated := dateStyle.Render(updatedStr)
-			marker := markerText
-			if isSelected {
-				marker = selectedMarkerStyle.Render(markerText)
-			}
-
-			row = fmt.Sprintf("%s%s  %s%s  %s  %s",
-				marker, animatedPart, styledName, strings.Repeat(" ", namePad), created, updated)
-		} else {
-			marker := markerText
-			if isSelected {
-				marker = selectedMarkerStyle.Render(markerText)
-			}
-
-			sizeCol := sizeStyleFor(e.Size)
-			var size string
-			if pending {
-				size = sizePendingStyle.Render(sizeFormatted)
-			} else {
-				size = sizeCol.Render(sizeFormatted)
-			}
-
-			var pct string
-			if pending {
-				pct = sizePendingStyle.Width(4).Render("")
-			} else {
-				pct = sizeCol.Width(4).Render(formatPercent(e.Size, totalSize))
-			}
-
-			created := dateStyle.Render(createdStr)
-			updated := dateStyle.Render(updatedStr)
-
-			// Truncate name for non-cursor rows
-			truncName := truncateName(displayName, nameWidth)
-
-			if e.IsSymlink {
-				styledName := symlinkStyle.Render(truncName)
-				namePad := nameWidth - lipgloss.Width(styledName)
-				if namePad < 0 {
-					namePad = 0
-				}
-				row = fmt.Sprintf("%s%s %s %s  %s%s  %s  %s", marker, bar, size, pct, styledName, strings.Repeat(" ", namePad), created, updated)
-			} else if e.IsDir {
-				nameStyleLocal := dirStyle
-				if isUnsized {
-					nameStyleLocal = dirUnsizedStyle
-				}
-				styledName := nameStyleLocal.Render(truncName)
-				namePad := nameWidth - lipgloss.Width(styledName)
-				if namePad < 0 {
-					namePad = 0
-				}
-				row = fmt.Sprintf("%s%s %s %s  %s%s  %s  %s", marker, bar, size, pct, styledName, strings.Repeat(" ", namePad), created, updated)
-			} else {
-				row = fmt.Sprintf("%s%s %s %s  %-*s  %s  %s", marker, bar, size, pct, nameWidth, truncName, created, updated)
-			}
-		}
-
-		b.WriteString(row)
-		b.WriteString("\n")
-	}
-
-	// Pad remaining space
-	for i := end - offset; i < visibleRows; i++ {
-		b.WriteString("\n")
 	}
 
 	// Separator

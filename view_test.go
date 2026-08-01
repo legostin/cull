@@ -283,3 +283,42 @@ func TestProjectsStatusBarReclaimable(t *testing.T) {
 		t.Errorf("status bar must show total reclaimable, got:\n%s", out)
 	}
 }
+
+func TestRenderMapContainsEntries(t *testing.T) {
+	m := newTestModel()
+	m.browseMap = true
+	tab := &m.tabs[tabBrowse]
+	tab.allEntries = []Entry{
+		{Name: "node_modules", Path: "/p/nm", Size: 1 << 30, Sized: true, IsDir: true},
+		{Name: "main.go", Path: "/p/m", Size: 500 << 20, Sized: true},
+	}
+	tab.entries = append([]Entry{}, tab.allEntries...)
+	out := m.View()
+	if !strings.Contains(out, "node_modules") || !strings.Contains(out, "main.go") {
+		t.Errorf("map must label rectangles, got:\n%s", out)
+	}
+	if !strings.Contains(out, "1.0 GB") {
+		t.Error("map labels must include sizes")
+	}
+}
+
+func TestRenderMapTooSmall(t *testing.T) {
+	m := newTestModel()
+	m.browseMap = true
+	m.width, m.height = 30, 12
+	m.tabs[tabBrowse].entries = []Entry{{Name: "a", Size: 5, Sized: true}}
+	out := m.View()
+	if !strings.Contains(out, "too small") {
+		t.Error("small terminal must show a hint instead of a map")
+	}
+}
+
+func TestRenderMapEmptyDir(t *testing.T) {
+	m := newTestModel()
+	m.browseMap = true
+	m.tabs[tabBrowse].entries = []Entry{{Name: "..", IsParent: true}}
+	out := m.View()
+	if !strings.Contains(out, "empty directory") {
+		t.Error("empty dir must show a hint")
+	}
+}

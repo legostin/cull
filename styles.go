@@ -127,6 +127,17 @@ var (
 	idleRowStyle = lipgloss.NewStyle().
 			Foreground(colorGreen)
 
+	// Treemap (BROWSE map mode) styles
+	mapBorderStyle   = lipgloss.NewStyle().Foreground(colorBorder)
+	mapLabelStyle    = lipgloss.NewStyle().Foreground(colorFg)
+	mapDirFillStyle  = lipgloss.NewStyle().Foreground(colorBlue)
+	mapFileFillStyle = lipgloss.NewStyle().Foreground(colorDim)
+	mapCursorStyle   = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#ffffff")).
+				Background(colorCursorBg)
+	mapSelectedStyle = lipgloss.NewStyle().Foreground(colorYellow)
+	mapPendingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
+
 	// Currently scanning directory name (dark yellow)
 	scanningNameStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#b8962e"))

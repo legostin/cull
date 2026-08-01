@@ -1,6 +1,12 @@
 package main
 
-import "sort"
+import (
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // mapRect is one treemap rectangle in terminal cells.
 type mapRect struct {
@@ -94,7 +100,9 @@ func splitTreemap(items []treemapItem, w, h, x, y int, out *[]mapRect) {
 	for _, it := range items[:k] {
 		left += it.weight
 	}
-	if w >= h {
+	// Terminal cells are ~2× taller than wide; weight the axis choice so
+	// rectangles come out visually square-ish rather than as thin columns.
+	if w >= 2*h {
 		lw := int(int64(w) * left / total)
 		if lw < 1 {
 			lw = 1
@@ -179,4 +187,169 @@ func (m *model) mapCursorRect(rects []mapRect) int {
 		}
 	}
 	return moreIdx
+}
+
+// Style classes for treemap grid cells.
+const (
+	mapClsBorder uint8 = iota
+	mapClsLabel
+	mapClsDirFill
+	mapClsFileFill
+	mapClsCursor
+	mapClsSelected
+	mapClsPending
+)
+
+// mapMessage renders a centered one-line message padded to the given rows.
+func mapMessage(msg string, rows int) string {
+	var b strings.Builder
+	mid := rows / 2
+	for i := 0; i < rows; i++ {
+		if i == mid {
+			b.WriteString(scanningStyle.Render("  " + msg))
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// renderMap draws the BROWSE treemap as a block of exactly `rows` lines.
+func (m model) renderMap(width, rows int) string {
+	if width < 40 || rows < 10 {
+		return mapMessage("terminal too small for map view", rows)
+	}
+	t := m.tabs[tabBrowse]
+	rects := layoutTreemap(t.entries, width, rows)
+	if len(rects) == 0 {
+		return mapMessage("empty directory", rows)
+	}
+
+	grid := make([][]rune, rows)
+	cls := make([][]uint8, rows)
+	for y := 0; y < rows; y++ {
+		grid[y] = make([]rune, width)
+		cls[y] = make([]uint8, width)
+		for x := 0; x < width; x++ {
+			grid[y][x] = ' '
+		}
+	}
+
+	curRect := m.mapCursorRect(rects)
+	for ri, r := range rects {
+		var e Entry
+		isMore := r.Index == -1
+		if !isMore {
+			e = t.entries[r.Index]
+		}
+		selected := !isMore && t.selected[e.Path]
+
+		frameCls := mapClsBorder
+		if ri == curRect {
+			frameCls = mapClsCursor
+		} else if selected {
+			frameCls = mapClsSelected
+		}
+
+		fillRune, fillCls := '▒', mapClsFileFill
+		switch {
+		case isMore:
+			fillRune, fillCls = '░', mapClsFileFill
+		case e.IsDir && !e.Sized:
+			fillRune, fillCls = '·', mapClsPending
+		case e.IsDir:
+			fillRune, fillCls = '█', mapClsDirFill
+		}
+		if ri == curRect {
+			fillCls = mapClsCursor
+		}
+
+		// Too small for a border: solid fill only.
+		if r.W < 3 || r.H < 3 {
+			for y := r.Y; y < r.Y+r.H; y++ {
+				for x := r.X; x < r.X+r.W; x++ {
+					grid[y][x], cls[y][x] = fillRune, fillCls
+				}
+			}
+			continue
+		}
+
+		x1, y1 := r.X+r.W-1, r.Y+r.H-1
+		for x := r.X; x <= x1; x++ {
+			grid[r.Y][x], cls[r.Y][x] = '─', frameCls
+			grid[y1][x], cls[y1][x] = '─', frameCls
+		}
+		for y := r.Y; y <= y1; y++ {
+			grid[y][r.X], cls[y][r.X] = '│', frameCls
+			grid[y][x1], cls[y][x1] = '│', frameCls
+		}
+		grid[r.Y][r.X], grid[r.Y][x1] = '┌', '┐'
+		grid[y1][r.X], grid[y1][x1] = '└', '┘'
+
+		for y := r.Y + 1; y < y1; y++ {
+			for x := r.X + 1; x < x1; x++ {
+				grid[y][x], cls[y][x] = fillRune, fillCls
+			}
+		}
+
+		// Label on the first interior row.
+		var label string
+		if isMore {
+			label = fmt.Sprintf("+%d more…", r.More)
+		} else {
+			label = m.entryDisplayName(e)
+			if e.Sized {
+				var totalSize int64
+				for _, en := range t.entries {
+					if !en.IsParent && en.Sized {
+						totalSize += en.Size
+					}
+				}
+				label += " · " + formatSize(e.Size) + " · " + strings.TrimSpace(formatPercent(e.Size, totalSize))
+			} else {
+				label += " · …"
+			}
+			if selected {
+				label = "● " + label
+			}
+		}
+		labelCls := mapClsLabel
+		if ri == curRect {
+			labelCls = mapClsCursor
+		} else if selected {
+			labelCls = mapClsSelected
+		}
+		maxLabel := r.W - 2
+		lr := []rune(" " + label + " ")
+		if len(lr) > maxLabel {
+			lr = lr[:maxLabel]
+		}
+		for i, ch := range lr {
+			grid[r.Y+1][r.X+1+i], cls[r.Y+1][r.X+1+i] = ch, labelCls
+		}
+	}
+
+	styles := map[uint8]lipgloss.Style{
+		mapClsBorder:   mapBorderStyle,
+		mapClsLabel:    mapLabelStyle,
+		mapClsDirFill:  mapDirFillStyle,
+		mapClsFileFill: mapFileFillStyle,
+		mapClsCursor:   mapCursorStyle,
+		mapClsSelected: mapSelectedStyle,
+		mapClsPending:  mapPendingStyle,
+	}
+	var b strings.Builder
+	b.Grow(rows * width * 2)
+	for y := 0; y < rows; y++ {
+		x := 0
+		for x < width {
+			c := cls[y][x]
+			start := x
+			for x < width && cls[y][x] == c {
+				x++
+			}
+			b.WriteString(styles[c].Render(string(grid[y][start:x])))
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }
