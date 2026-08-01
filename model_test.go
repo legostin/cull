@@ -907,3 +907,42 @@ func TestProjectSizeMsgSetsSizeAndResorts(t *testing.T) {
 		t.Errorf("sized row must sort first: %+v", pt2.entries)
 	}
 }
+
+func TestNavigateUpAboveProjectsRootWidensAndInvalidates(t *testing.T) {
+	m := newTestModel() // path = /tmp/test
+	m.projectsLoaded = true
+	m.projectMeta = map[string]projectArtifact{"/tmp/test/a/node_modules": {Kind: "node_modules"}}
+	m.tabs[tabProjects].allEntries = []Entry{{Name: "a", Path: "/tmp/test/a/node_modules"}}
+
+	nm, _ := m.navigateUp() // -> /tmp, above the scan root
+	m2 := nm.(model)
+	if len(m2.projectsRoots) != 1 || m2.projectsRoots[0] != "/tmp" {
+		t.Fatalf("projectsRoots = %v, want [/tmp]", m2.projectsRoots)
+	}
+	if m2.projectsLoaded {
+		t.Error("going above the scan root must invalidate projectsLoaded")
+	}
+	if len(m2.tabs[tabProjects].allEntries) != 0 {
+		t.Error("PROJECTS tab entries must be reset")
+	}
+	if m2.projectMeta != nil {
+		t.Error("projectMeta must be cleared")
+	}
+}
+
+func TestNavigateUpWithinProjectsRootKeepsScan(t *testing.T) {
+	m := newTestModel()
+	m.projectsRoots = []string{"/tmp"} // scan root is already the parent
+	m.path = "/tmp/test"
+	m.projectsLoaded = true
+	m.tabs[tabProjects].allEntries = []Entry{{Name: "a", Path: "/tmp/test/a/node_modules"}}
+
+	nm, _ := m.navigateUp() // -> /tmp == scan root, still covered
+	m2 := nm.(model)
+	if !m2.projectsLoaded {
+		t.Error("going up to the scan root itself must not invalidate")
+	}
+	if len(m2.tabs[tabProjects].allEntries) != 1 {
+		t.Error("PROJECTS tab entries must be kept")
+	}
+}

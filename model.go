@@ -191,8 +191,8 @@ type model struct {
 	projectMeta      map[string]projectArtifact // Entry.Path -> artifact meta
 	projectsScanning bool
 	projectsLoaded   bool
-	projectsSortIdle bool // t toggles size (false) / idle (true) sort
-	launchRoots      []string
+	projectsSortIdle bool     // t toggles size (false) / idle (true) sort
+	projectsRoots    []string // scan roots; widen when browsing above them
 
 	// CLI flags
 	readOnly    bool
@@ -217,7 +217,7 @@ func newModel(path string, topN int, readOnly, skipConfirm bool) model {
 		trashRegistry: reg,
 		readOnly:      readOnly,
 		skipConfirm:   skipConfirm,
-		launchRoots:   []string{path},
+		projectsRoots: []string{path},
 	}
 	for i := range m.tabs {
 		m.tabs[i] = newTabState()
@@ -240,7 +240,7 @@ func newMultiRootModel(paths []string, topN int, readOnly, skipConfirm bool) mod
 		trashRegistry: reg,
 		readOnly:      readOnly,
 		skipConfirm:   skipConfirm,
-		launchRoots:   paths,
+		projectsRoots: paths,
 	}
 	for i := range m.tabs {
 		m.tabs[i] = newTabState()
@@ -884,6 +884,16 @@ func (m model) navigateUp() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Navigating above the PROJECTS scan root widens it: reset the tab so
+	// the next PROJECTS visit (or r) rescans from the new, higher root.
+	if len(m.projectsRoots) == 1 && isStrictAncestor(parent, m.projectsRoots[0]) {
+		m.projectsRoots = []string{parent}
+		m.projectsLoaded = false
+		m.projectsScanning = false
+		m.projectMeta = nil
+		m.tabs[tabProjects] = newTabState()
+	}
+
 	prevDir := m.path
 	bt := &m.tabs[tabBrowse]
 
@@ -967,6 +977,18 @@ func (m model) navigateUp() (tea.Model, tea.Cmd) {
 
 	// No cache — full quick scan
 	return m, quickScanCmd(parent)
+}
+
+// isStrictAncestor reports whether anc is a proper ancestor directory of path.
+func isStrictAncestor(anc, path string) bool {
+	if anc == path {
+		return false
+	}
+	sep := string(filepath.Separator)
+	if !strings.HasSuffix(anc, sep) {
+		anc += sep
+	}
+	return strings.HasPrefix(path, anc)
 }
 
 // navigateToVirtualRoot returns to the virtual multi-root view.

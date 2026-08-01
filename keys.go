@@ -64,7 +64,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case tabProjects:
 			if !m.projectsLoaded && !m.projectsScanning {
 				m.projectsScanning = true
-				return m, tea.Batch(cmd, loadProjectsCmd(m.launchRoots))
+				return m, tea.Batch(cmd, loadProjectsCmd(m.projectsRoots))
 			}
 		}
 		return m, cmd
@@ -168,7 +168,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.tabs[tabProjects] = newTabState()
 			m.projectsScanning = true
 			m.projectsLoaded = false
-			return m, loadProjectsCmd(m.launchRoots)
+			return m, loadProjectsCmd(m.projectsRoots)
 		}
 		// Restore: only on history tab, not read-only
 		if m.readOnly || m.activeTab != tabHistory {

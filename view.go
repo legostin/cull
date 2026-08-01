@@ -416,7 +416,7 @@ func (m model) View() string {
 			b.WriteString(scanningStyle.Render("  Scanning projects…"))
 			b.WriteString("\n")
 		} else if m.projectsLoaded {
-			root := strings.Join(m.launchRoots, ", ")
+			root := strings.Join(m.projectsRoots, ", ")
 			b.WriteString(staleStyle.Render("  no projects found under " + root + "; run cull from your projects directory"))
 			b.WriteString("\n")
 		}
