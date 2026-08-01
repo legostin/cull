@@ -41,12 +41,19 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "shift+tab":
-		hasHistory := m.trashRegistry != nil && len(m.trashRegistry.Records) > 0
-		numTabs := tabID(3)
-		if hasHistory {
-			numTabs = 4
+		order := []tabID{tabBrowse, tabLargest, tabCaches}
+		if m.trashRegistry != nil && len(m.trashRegistry.Records) > 0 {
+			order = append(order, tabHistory)
 		}
-		m.activeTab = (m.activeTab + 1) % numTabs
+		order = append(order, tabProjects)
+		idx := 0
+		for i, id := range order {
+			if id == m.activeTab {
+				idx = i
+				break
+			}
+		}
+		m.activeTab = order[(idx+1)%len(order)]
 		cmd := m.resetNameScroll()
 		switch m.activeTab {
 		case tabHistory:
@@ -54,6 +61,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case tabCaches:
 			m.cachesNote = ""
 			return m, tea.Batch(cmd, loadCachesCmd())
+		case tabProjects:
+			if !m.projectsLoaded && !m.projectsScanning {
+				m.projectsScanning = true
+				return m, tea.Batch(cmd, loadProjectsCmd(m.launchRoots))
+			}
 		}
 		return m, cmd
 
@@ -148,6 +160,16 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "r":
+		// Rescan on PROJECTS tab (allowed in read-only mode)
+		if m.activeTab == tabProjects {
+			if m.projectsScanning {
+				return m, nil
+			}
+			m.tabs[tabProjects] = newTabState()
+			m.projectsScanning = true
+			m.projectsLoaded = false
+			return m, loadProjectsCmd(m.launchRoots)
+		}
 		// Restore: only on history tab, not read-only
 		if m.readOnly || m.activeTab != tabHistory {
 			return m, nil
@@ -258,6 +280,26 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clampOffset()
 
 	case "t":
+		// On PROJECTS tab: toggle size / idle sort
+		if m.activeTab == tabProjects {
+			m.projectsSortIdle = !m.projectsSortIdle
+			var cursorPath string
+			if t.cursor < len(t.entries) {
+				cursorPath = t.entries[t.cursor].Path
+			}
+			sortProjectEntries(t.allEntries, m.projectsSortIdle)
+			m.applyFilter()
+			if cursorPath != "" {
+				for i, e := range t.entries {
+					if e.Path == cursorPath {
+						t.cursor = i
+						break
+					}
+				}
+			}
+			m.clampOffset()
+			return m, m.resetNameScroll()
+		}
 		// Cycle sort mode: size -> name -> updated -> created -> size
 		// Only in browse tab
 		if m.activeTab != tabBrowse {

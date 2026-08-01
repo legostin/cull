@@ -141,11 +141,11 @@ func TestKey_ShiftS_RangeSelect(t *testing.T) {
 
 func TestKey_ShiftTab_SwitchesTab_NoHistory(t *testing.T) {
 	m := newKeysTestModel()
-	// Empty registry → 3 tabs (BROWSE / LARGEST / CACHES)
+	// Empty registry → 4 tabs (BROWSE / LARGEST / CACHES / PROJECTS)
 	m.trashRegistry = &TrashRegistry{}
 	m.activeTab = tabBrowse
 
-	want := []tabID{tabLargest, tabCaches, tabBrowse}
+	want := []tabID{tabLargest, tabCaches, tabProjects, tabBrowse}
 	for _, w := range want {
 		result, _ := m.Update(keyMsg("shift+tab"))
 		m = result.(model)
@@ -165,7 +165,7 @@ func TestKey_ShiftTab_SwitchesTab_WithHistory(t *testing.T) {
 	}
 	m.activeTab = tabBrowse
 
-	want := []tabID{tabLargest, tabCaches, tabHistory, tabBrowse}
+	want := []tabID{tabLargest, tabCaches, tabHistory, tabProjects, tabBrowse}
 	for _, w := range want {
 		result, _ := m.Update(keyMsg("shift+tab"))
 		m = result.(model)
@@ -628,5 +628,74 @@ func TestBuildDeleteCmd_ExpandsCacheGroups(t *testing.T) {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Errorf("%s still exists", p)
 		}
+	}
+}
+
+func TestKey_ShiftTab_StartsProjectsScanOnce(t *testing.T) {
+	m := newKeysTestModel()
+	m.trashRegistry = &TrashRegistry{}
+	m.activeTab = tabCaches
+
+	result, cmd := m.Update(keyMsg("shift+tab"))
+	m2 := result.(model)
+	if m2.activeTab != tabProjects {
+		t.Fatalf("activeTab = %d, want tabProjects", m2.activeTab)
+	}
+	if !m2.projectsScanning || cmd == nil {
+		t.Error("first entry must start the projects scan")
+	}
+
+	// second entry after load: no rescan
+	m2.projectsLoaded = true
+	m2.projectsScanning = false
+	m2.activeTab = tabCaches
+	result3, _ := m2.Update(keyMsg("shift+tab"))
+	if result3.(model).projectsScanning {
+		t.Error("re-entering a loaded PROJECTS tab must not rescan")
+	}
+}
+
+func TestKey_R_ProjectsRescan(t *testing.T) {
+	m := newKeysTestModel()
+	m.activeTab = tabProjects
+	m.projectsLoaded = true
+
+	result, cmd := m.Update(keyMsg("r"))
+	m2 := result.(model)
+	if !m2.projectsScanning || cmd == nil {
+		t.Error("r on PROJECTS tab must trigger a rescan")
+	}
+	if m2.projectsLoaded {
+		t.Error("rescan must reset projectsLoaded")
+	}
+}
+
+func TestKey_T_ProjectsSortToggle(t *testing.T) {
+	m := newKeysTestModel()
+	m.activeTab = tabProjects
+	now := time.Now()
+	pt := &m.tabs[tabProjects]
+	pt.allEntries = []Entry{
+		{Name: "small-old", Path: "/p/a", Size: 1, Sized: true, ModTime: now.Add(-100 * time.Hour)},
+		{Name: "big-fresh", Path: "/p/b", Size: 100, Sized: true, ModTime: now},
+	}
+	m.applyFilterForTab(tabProjects)
+
+	result, _ := m.Update(keyMsg("t"))
+	m2 := result.(model)
+	if !m2.projectsSortIdle {
+		t.Fatal("t must switch PROJECTS to idle sort")
+	}
+	if m2.tabs[tabProjects].entries[0].Path != "/p/a" {
+		t.Error("idle sort must put oldest project first")
+	}
+
+	result3, _ := m2.Update(keyMsg("t"))
+	m3 := result3.(model)
+	if m3.projectsSortIdle {
+		t.Fatal("second t must switch back to size sort")
+	}
+	if m3.tabs[tabProjects].entries[0].Path != "/p/b" {
+		t.Error("size sort must put biggest artifact first")
 	}
 }
