@@ -3,8 +3,11 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // artifactRule maps project marker files to build-artifact directory names
@@ -149,4 +152,56 @@ func matchArtifacts(names []string) map[string]bool {
 		}
 	}
 	return out
+}
+
+// projectsLoadedMsg is sent when the PROJECTS walk completes.
+type projectsLoadedMsg struct {
+	entries   []Entry
+	artifacts map[string]projectArtifact // keyed by artifact path
+}
+
+// projectSizeMsg carries the computed size of one artifact row.
+type projectSizeMsg struct {
+	path string
+	size int64
+}
+
+// loadProjectsCmd walks the launch roots for project artifacts.
+func loadProjectsCmd(roots []string) tea.Cmd {
+	return func() tea.Msg {
+		var all []projectArtifact
+		for _, r := range roots {
+			all = append(all, findArtifacts(r)...)
+		}
+		entries := make([]Entry, 0, len(all))
+		meta := make(map[string]projectArtifact, len(all))
+		for _, a := range all {
+			entries = append(entries, Entry{
+				Name:    a.ProjectName,
+				Path:    a.Path,
+				IsDir:   true,
+				ModTime: a.LastTouched,
+			})
+			meta[a.Path] = a
+		}
+		return projectsLoadedMsg{entries: entries, artifacts: meta}
+	}
+}
+
+// projectSizeCmd computes the size of one artifact dir in the background.
+func projectSizeCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		return projectSizeMsg{path: path, size: sumPathsSize([]string{path})}
+	}
+}
+
+// sortProjectEntries orders PROJECTS rows by size desc, or by idle time
+// (oldest LastTouched first) when byIdle is set.
+func sortProjectEntries(entries []Entry, byIdle bool) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		if byIdle {
+			return entries[i].ModTime.Before(entries[j].ModTime)
+		}
+		return entries[i].Size > entries[j].Size
+	})
 }

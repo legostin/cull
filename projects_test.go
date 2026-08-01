@@ -174,6 +174,23 @@ func TestFindArtifactsIdleTime(t *testing.T) {
 	}
 }
 
+func TestSortProjectEntries(t *testing.T) {
+	now := time.Now()
+	entries := []Entry{
+		{Path: "a", Size: 10, ModTime: now.Add(-1 * time.Hour)},
+		{Path: "b", Size: 30, ModTime: now.Add(-3 * time.Hour)},
+		{Path: "c", Size: 20, ModTime: now.Add(-2 * time.Hour)},
+	}
+	sortProjectEntries(entries, false)
+	if entries[0].Path != "b" || entries[1].Path != "c" || entries[2].Path != "a" {
+		t.Errorf("by size: got %s,%s,%s want b,c,a", entries[0].Path, entries[1].Path, entries[2].Path)
+	}
+	sortProjectEntries(entries, true)
+	if entries[0].Path != "b" || entries[1].Path != "c" || entries[2].Path != "a" {
+		t.Errorf("by idle (oldest first): got %s,%s,%s want b,c,a", entries[0].Path, entries[1].Path, entries[2].Path)
+	}
+}
+
 func TestIsIdleSafe(t *testing.T) {
 	old := Entry{ModTime: time.Now().Add(-200 * 24 * time.Hour)}
 	fresh := Entry{ModTime: time.Now().Add(-10 * 24 * time.Hour)}

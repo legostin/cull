@@ -727,13 +727,13 @@ func TestQuickScanDoneMsg(t *testing.T) {
 }
 
 func TestTabCachesID(t *testing.T) {
-	if tabBrowse != 0 || tabLargest != 1 || tabCaches != 2 || tabHistory != 3 {
-		t.Errorf("tab IDs = %d %d %d %d, want 0 1 2 3",
-			tabBrowse, tabLargest, tabCaches, tabHistory)
+	if tabBrowse != 0 || tabLargest != 1 || tabCaches != 2 || tabHistory != 3 || tabProjects != 4 {
+		t.Errorf("tab IDs = %d %d %d %d %d, want 0 1 2 3 4",
+			tabBrowse, tabLargest, tabCaches, tabHistory, tabProjects)
 	}
 	m := newTestModel()
-	if len(m.tabs) != 4 {
-		t.Errorf("len(tabs) = %d, want 4", len(m.tabs))
+	if len(m.tabs) != 5 {
+		t.Errorf("len(tabs) = %d, want 5", len(m.tabs))
 	}
 }
 
@@ -854,5 +854,56 @@ func TestViewConfirm_Docker(t *testing.T) {
 	out := m.View()
 	if !strings.Contains(out, "docker system prune -a -f") {
 		t.Error("confirm dialog must show the exact prune command")
+	}
+}
+
+func TestProjectsLoadedMsgPopulatesTab(t *testing.T) {
+	m := newTestModel()
+	m.activeTab = tabProjects
+
+	msg := projectsLoadedMsg{
+		entries: []Entry{
+			{Name: "app", Path: "/tmp/x/app/node_modules", IsDir: true},
+			{Name: "svc", Path: "/tmp/x/svc/target", IsDir: true},
+		},
+		artifacts: map[string]projectArtifact{
+			"/tmp/x/app/node_modules": {ProjectName: "app", Kind: "node_modules"},
+			"/tmp/x/svc/target":       {ProjectName: "svc", Kind: "target"},
+		},
+	}
+	nm, cmd := m.Update(msg)
+	m2 := nm.(model)
+	if len(m2.tabs[tabProjects].entries) != 2 {
+		t.Fatalf("entries = %d, want 2", len(m2.tabs[tabProjects].entries))
+	}
+	if m2.projectsScanning {
+		t.Error("projectsScanning must be false after load")
+	}
+	if !m2.projectsLoaded {
+		t.Error("projectsLoaded must be true after load")
+	}
+	if m2.projectMeta["/tmp/x/svc/target"].Kind != "target" {
+		t.Error("projectMeta not stored")
+	}
+	if cmd == nil {
+		t.Error("expected batched size commands, got nil")
+	}
+}
+
+func TestProjectSizeMsgSetsSizeAndResorts(t *testing.T) {
+	m := newTestModel()
+	m.activeTab = tabProjects
+	pt := &m.tabs[tabProjects]
+	pt.allEntries = []Entry{
+		{Name: "a", Path: "/p/a", IsDir: true},
+		{Name: "b", Path: "/p/b", IsDir: true},
+	}
+	m.applyFilterForTab(tabProjects)
+
+	nm, _ := m.Update(projectSizeMsg{path: "/p/b", size: 500})
+	m2 := nm.(model)
+	pt2 := &m2.tabs[tabProjects]
+	if pt2.entries[0].Path != "/p/b" || !pt2.entries[0].Sized || pt2.entries[0].Size != 500 {
+		t.Errorf("sized row must sort first: %+v", pt2.entries)
 	}
 }

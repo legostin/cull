@@ -105,6 +105,7 @@ const (
 	tabLargest
 	tabCaches
 	tabHistory
+	tabProjects
 )
 
 type tabState struct {
@@ -134,7 +135,7 @@ type dirCacheEntry struct {
 type model struct {
 	path      string
 	activeTab tabID
-	tabs      [4]tabState
+	tabs      [5]tabState
 	mode      mode
 	width     int
 	height    int
@@ -186,6 +187,13 @@ type model struct {
 	confirmDocker   bool                // confirm dialog is for docker prune
 	cachesNote      string              // status-bar note, e.g. reclaimed space after prune
 
+	// PROJECTS tab state
+	projectMeta      map[string]projectArtifact // Entry.Path -> artifact meta
+	projectsScanning bool
+	projectsLoaded   bool
+	projectsSortIdle bool // t toggles size (false) / idle (true) sort
+	launchRoots      []string
+
 	// CLI flags
 	readOnly    bool
 	skipConfirm bool
@@ -209,6 +217,7 @@ func newModel(path string, topN int, readOnly, skipConfirm bool) model {
 		trashRegistry: reg,
 		readOnly:      readOnly,
 		skipConfirm:   skipConfirm,
+		launchRoots:   []string{path},
 	}
 	for i := range m.tabs {
 		m.tabs[i] = newTabState()
@@ -231,6 +240,7 @@ func newMultiRootModel(paths []string, topN int, readOnly, skipConfirm bool) mod
 		trashRegistry: reg,
 		readOnly:      readOnly,
 		skipConfirm:   skipConfirm,
+		launchRoots:   paths,
 	}
 	for i := range m.tabs {
 		m.tabs[i] = newTabState()
@@ -439,6 +449,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case cacheSizeMsg:
 		m.handleCacheSize(msg)
+		return m, nil
+
+	case projectsLoadedMsg:
+		pt := &m.tabs[tabProjects]
+		*pt = newTabState()
+		pt.allEntries = msg.entries
+		m.applyFilterForTab(tabProjects)
+		m.projectMeta = msg.artifacts
+		m.projectsScanning = false
+		m.projectsLoaded = true
+		cmds := make([]tea.Cmd, 0, len(msg.entries))
+		for _, e := range msg.entries {
+			cmds = append(cmds, projectSizeCmd(e.Path))
+		}
+		return m, tea.Batch(cmds...)
+
+	case projectSizeMsg:
+		m.handleProjectSize(msg)
 		return m, nil
 
 	case dockerPruneDoneMsg:
@@ -1025,6 +1053,47 @@ func (m *model) handleCacheSize(msg cacheSizeMsg) {
 		ct.cursor = 0
 	}
 	if m.activeTab == tabCaches {
+		m.clampOffset()
+	}
+}
+
+// handleProjectSize applies a projectSizeMsg to the PROJECTS tab: sets the
+// row size, re-sorts by the current projects sort and keeps the cursor on
+// the same entry.
+func (m *model) handleProjectSize(msg projectSizeMsg) {
+	pt := &m.tabs[tabProjects]
+
+	var cursorPath string
+	if pt.cursor < len(pt.entries) {
+		cursorPath = pt.entries[pt.cursor].Path
+	}
+
+	for i := range pt.allEntries {
+		if pt.allEntries[i].Path == msg.path {
+			pt.allEntries[i].Size = msg.size
+			pt.allEntries[i].Sized = true
+			break
+		}
+	}
+
+	sortProjectEntries(pt.allEntries, m.projectsSortIdle)
+	m.applyFilterForTab(tabProjects)
+
+	if cursorPath != "" {
+		for i, e := range pt.entries {
+			if e.Path == cursorPath {
+				pt.cursor = i
+				break
+			}
+		}
+	}
+	if pt.cursor >= len(pt.entries) && len(pt.entries) > 0 {
+		pt.cursor = len(pt.entries) - 1
+	}
+	if len(pt.entries) == 0 {
+		pt.cursor = 0
+	}
+	if m.activeTab == tabProjects {
 		m.clampOffset()
 	}
 }
