@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -44,6 +46,74 @@ const idleSafeAfter = 180 * 24 * time.Hour
 // long enough to highlight as safe to clean.
 func isIdleSafe(e Entry) bool {
 	return !e.ModTime.IsZero() && time.Since(e.ModTime) > idleSafeAfter
+}
+
+// projectArtifact is one build-artifact directory found under a project.
+type projectArtifact struct {
+	ProjectName string // base name of the project directory
+	ProjectPath string
+	Path        string // absolute path of the artifact dir
+	Kind        string // artifact dir name, e.g. "node_modules"
+	Caution     bool   // deletion may break builds (dist, vendor)
+	LastTouched time.Time
+}
+
+// findArtifacts walks root and returns all project build artifacts.
+// It never descends into artifact dirs or .git.
+func findArtifacts(root string) []projectArtifact {
+	var out []projectArtifact
+	walkProjects(root, &out)
+	return out
+}
+
+// walkProjects recursively scans dir, appends found artifacts to out and
+// returns the max mtime of files in the subtree, excluding artifact dirs
+// and .git. Unreadable dirs are skipped silently.
+func walkProjects(dir string, out *[]projectArtifact) time.Time {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return time.Time{}
+	}
+
+	names := make([]string, len(entries))
+	for i, de := range entries {
+		names[i] = de.Name()
+	}
+	wanted := matchArtifacts(names)
+
+	var own []projectArtifact
+	var maxMtime time.Time
+	for _, de := range entries {
+		name := de.Name()
+		if de.IsDir() {
+			if name == ".git" {
+				continue
+			}
+			if wanted[name] {
+				own = append(own, projectArtifact{
+					ProjectName: filepath.Base(dir),
+					ProjectPath: dir,
+					Path:        filepath.Join(dir, name),
+					Kind:        name,
+					Caution:     cautionArtifacts[name],
+				})
+				continue // sized separately; excluded from idle mtime
+			}
+			if sub := walkProjects(filepath.Join(dir, name), out); sub.After(maxMtime) {
+				maxMtime = sub
+			}
+			continue
+		}
+		if info, err := de.Info(); err == nil && info.ModTime().After(maxMtime) {
+			maxMtime = info.ModTime()
+		}
+	}
+
+	for i := range own {
+		own[i].LastTouched = maxMtime
+	}
+	*out = append(*out, own...)
+	return maxMtime
 }
 
 // matchArtifacts returns the union of artifact dir names whose marker files
