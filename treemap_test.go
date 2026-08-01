@@ -109,3 +109,51 @@ func TestNearestRect(t *testing.T) {
 		}
 	}
 }
+
+func TestNearestRectAsymmetric(t *testing.T) {
+	// A spans the top; B and C sit under it side by side.
+	// ┌──── A ────┐
+	// ├─ B ─┬─ C ─┤
+	// └─────┴─────┘
+	rs := []mapRect{
+		{X: 0, Y: 0, W: 20, H: 4, Index: 0},  // A
+		{X: 0, Y: 4, W: 10, H: 4, Index: 1},  // B
+		{X: 10, Y: 4, W: 10, H: 4, Index: 2}, // C
+	}
+	if got := nearestRect(rs, 2, -1, 0); got != 1 {
+		t.Errorf("left from C must go to B (same band), got %d", got)
+	}
+	if got := nearestRect(rs, 2, 0, -1); got != 0 {
+		t.Errorf("up from C must go to A, got %d", got)
+	}
+	if got := nearestRect(rs, 1, -1, 0); got != 1 {
+		t.Errorf("left from B must stay (edge), got %d", got)
+	}
+	if got := nearestRect(rs, 0, 0, 1); got != 2 {
+		t.Errorf("down from A (center over C) must go to C, got %d", got)
+	}
+	if got := nearestRect(rs, 0, 0, -1); got != 0 {
+		t.Errorf("up from A must stay (edge), got %d", got)
+	}
+}
+
+func TestMapFillClass(t *testing.T) {
+	const MB, GB = int64(1) << 20, int64(1) << 30
+	cases := []struct {
+		size  int64
+		isDir bool
+		want  uint8
+	}{
+		{5 * MB, true, mapClsDirFill},
+		{5 * MB, false, mapClsFileFill},
+		{50 * MB, true, mapClsFill10MB},
+		{500 * MB, false, mapClsFill100MB},
+		{2 * GB, true, mapClsFill1GB},
+		{20 * GB, false, mapClsFill10GB},
+	}
+	for _, c := range cases {
+		if got := mapFillClass(c.size, c.isDir); got != c.want {
+			t.Errorf("mapFillClass(%d, %v) = %d, want %d", c.size, c.isDir, got, c.want)
+		}
+	}
+}

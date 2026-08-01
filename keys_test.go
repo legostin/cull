@@ -752,3 +752,17 @@ func TestKey_MapMode_EnterOnCollapsedReturnsToList(t *testing.T) {
 		t.Error("enter on the +N more rect must return to list view")
 	}
 }
+
+func TestKey_M_ParksCursorOffParent(t *testing.T) {
+	m := newKeysTestModel()
+	for i := range m.tab().allEntries {
+		m.tab().allEntries[i].Sized = true
+	}
+	m.tab().entries = append([]Entry{}, m.tab().allEntries...)
+	m.tab().cursor = 0 // ".." parent — has no rectangle on the map
+	result, _ := m.Update(keyMsg("m"))
+	rm := result.(model)
+	if rm.tab().entries[rm.tab().cursor].IsParent {
+		t.Error("entering map mode must move the cursor off the parent entry")
+	}
+}

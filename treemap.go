@@ -125,41 +125,35 @@ func splitTreemap(items []treemapItem, w, h, x, y int, out *[]mapRect) {
 	}
 }
 
-// nearestRect returns the index (into rects) of the closest rectangle whose
-// center lies in direction (dx,dy) from rects[cur], or cur when none exists.
-// Off-axis distance is doubled so movement feels axis-aligned.
+// nearestRect returns the index (into rects) of the rectangle one step in
+// direction (dx,dy) from rects[cur], or cur when none exists. Because the
+// layout is a perfect tiling, stepping one cell past the current rect's
+// border from its center line hits exactly the visually adjacent rect —
+// no diagonal jumps.
 func nearestRect(rects []mapRect, cur, dx, dy int) int {
-	if cur < 0 || cur >= len(rects) {
+	if cur < 0 || cur >= len(rects) || (dx == 0 && dy == 0) {
 		return cur
 	}
-	cx := rects[cur].X*2 + rects[cur].W // centers ×2 to stay integral
-	cy := rects[cur].Y*2 + rects[cur].H
-	best, bestDist := cur, 1<<62
-	for i, r := range rects {
-		if i == cur {
-			continue
-		}
-		rx := r.X*2 + r.W
-		ry := r.Y*2 + r.H
-		if dx > 0 && rx <= cx || dx < 0 && rx >= cx || dy > 0 && ry <= cy || dy < 0 && ry >= cy {
-			continue
-		}
-		major := (rx-cx)*dx + (ry-cy)*dy
-		var minor int
-		if dx != 0 {
-			minor = ry - cy
-		} else {
-			minor = rx - cx
-		}
-		if minor < 0 {
-			minor = -minor
-		}
-		d := major + 2*minor
-		if d < bestDist {
-			best, bestDist = i, d
+	r := rects[cur]
+	cx := r.X + r.W/2
+	cy := r.Y + r.H/2
+	var px, py int
+	switch {
+	case dx < 0:
+		px, py = r.X-1, cy
+	case dx > 0:
+		px, py = r.X+r.W, cy
+	case dy < 0:
+		px, py = cx, r.Y-1
+	default:
+		px, py = cx, r.Y+r.H
+	}
+	for i, c := range rects {
+		if i != cur && px >= c.X && px < c.X+c.W && py >= c.Y && py < c.Y+c.H {
+			return i
 		}
 	}
-	return best
+	return cur
 }
 
 // browseMapLayout computes the treemap layout for the BROWSE tab at the
@@ -198,7 +192,35 @@ const (
 	mapClsCursor
 	mapClsSelected
 	mapClsPending
+	mapClsFill10MB
+	mapClsFill100MB
+	mapClsFill1GB
+	mapClsFill10GB
 )
+
+// mapFillClass picks the fill style class for a sized entry: the same
+// weight ladder as the list's size column (10 MB / 100 MB / 1 GB / 10 GB),
+// falling back to the type color (dir blue, file gray) for small entries.
+func mapFillClass(size int64, isDir bool) uint8 {
+	const (
+		MB = int64(1) << 20
+		GB = int64(1) << 30
+	)
+	switch {
+	case size >= 10*GB:
+		return mapClsFill10GB
+	case size >= GB:
+		return mapClsFill1GB
+	case size >= 100*MB:
+		return mapClsFill100MB
+	case size >= 10*MB:
+		return mapClsFill10MB
+	case isDir:
+		return mapClsDirFill
+	default:
+		return mapClsFileFill
+	}
+}
 
 // mapMessage renders a centered one-line message padded to the given rows.
 func mapMessage(msg string, rows int) string {
@@ -257,7 +279,9 @@ func (m model) renderMap(width, rows int) string {
 		case e.IsDir && !e.Sized:
 			fillRune, fillCls = '·', mapClsPending
 		case e.IsDir:
-			fillRune, fillCls = '█', mapClsDirFill
+			fillRune, fillCls = '█', mapFillClass(e.Size, true)
+		default:
+			fillCls = mapFillClass(e.Size, false)
 		}
 		if ri == curRect {
 			fillCls = mapClsCursor
@@ -329,13 +353,17 @@ func (m model) renderMap(width, rows int) string {
 	}
 
 	styles := map[uint8]lipgloss.Style{
-		mapClsBorder:   mapBorderStyle,
-		mapClsLabel:    mapLabelStyle,
-		mapClsDirFill:  mapDirFillStyle,
-		mapClsFileFill: mapFileFillStyle,
-		mapClsCursor:   mapCursorStyle,
-		mapClsSelected: mapSelectedStyle,
-		mapClsPending:  mapPendingStyle,
+		mapClsBorder:    mapBorderStyle,
+		mapClsLabel:     mapLabelStyle,
+		mapClsDirFill:   mapDirFillStyle,
+		mapClsFileFill:  mapFileFillStyle,
+		mapClsCursor:    mapCursorStyle,
+		mapClsSelected:  mapSelectedStyle,
+		mapClsPending:   mapPendingStyle,
+		mapClsFill10MB:  mapFill10MBStyle,
+		mapClsFill100MB: mapFill100MBStyle,
+		mapClsFill1GB:   mapFill1GBStyle,
+		mapClsFill10GB:  mapFill10GBStyle,
 	}
 	var b strings.Builder
 	b.Grow(rows * width * 2)

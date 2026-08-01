@@ -138,6 +138,12 @@ var (
 	mapSelectedStyle = lipgloss.NewStyle().Foreground(colorYellow)
 	mapPendingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
 
+	// Treemap fills tinted by weight — same ladder as the size column
+	mapFill10MBStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#88aa44"))
+	mapFill100MBStyle = lipgloss.NewStyle().Foreground(colorYellow)
+	mapFill1GBStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#ee8833"))
+	mapFill10GBStyle  = lipgloss.NewStyle().Foreground(colorRed)
+
 	// Currently scanning directory name (dark yellow)
 	scanningNameStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#b8962e"))

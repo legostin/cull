@@ -306,6 +306,12 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "m":
 		if m.activeTab == tabBrowse {
 			m.browseMap = !m.browseMap
+			// Park the cursor on a mapped entry — ".." has no rectangle
+			if m.browseMap && t.cursor < len(t.entries) && t.entries[t.cursor].IsParent {
+				if rects := m.browseMapLayout(); len(rects) > 0 && rects[0].Index >= 0 {
+					t.cursor = rects[0].Index
+				}
+			}
 		}
 
 	case "f":
