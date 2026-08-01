@@ -123,6 +123,10 @@ var (
 	staleStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#555555"))
 
+	// Long-idle project row on the PROJECTS tab (safe to clean)
+	idleRowStyle = lipgloss.NewStyle().
+			Foreground(colorGreen)
+
 	// Currently scanning directory name (dark yellow)
 	scanningNameStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#b8962e"))

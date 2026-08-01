@@ -573,6 +573,23 @@ func (m model) entryDisplayName(e Entry) string {
 			name = e.Name + " · " + e.Path
 		}
 	}
+	if m.activeTab == tabProjects && e.Path != "" {
+		name = m.projectsDisplayName(e)
+	}
+	return name
+}
+
+// projectsDisplayName renders a PROJECTS row name: "project · artifact"
+// plus a caution note for dist/vendor.
+func (m model) projectsDisplayName(e Entry) string {
+	meta, ok := m.projectMeta[e.Path]
+	if !ok {
+		return e.Name
+	}
+	name := e.Name + " · " + meta.Kind
+	if meta.Caution {
+		name += " · may be needed"
+	}
 	return name
 }
 

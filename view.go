@@ -199,6 +199,7 @@ func (m model) renderTabBar(contentWidth int) string {
 	if m.trashRegistry != nil && len(m.trashRegistry.Records) > 0 {
 		tabs = append(tabs, tabInfo{tabHistory, "HISTORY"})
 	}
+	tabs = append(tabs, tabInfo{tabProjects, "PROJECTS"})
 
 	var parts []string
 	for _, ti := range tabs {
@@ -214,6 +215,14 @@ func (m model) renderTabBar(contentWidth int) string {
 		// Show item count for CACHES tab once scanned
 		if ti.id == tabCaches {
 			if n := len(m.tabs[tabCaches].allEntries); n > 0 {
+				label += fmt.Sprintf(" (%d)", n)
+			}
+		}
+		// Scanning indicator / item count for PROJECTS tab
+		if ti.id == tabProjects {
+			if m.projectsScanning && ti.id != m.activeTab {
+				label += " ◐"
+			} else if n := len(m.tabs[tabProjects].allEntries); n > 0 {
 				label += fmt.Sprintf(" (%d)", n)
 			}
 		}
@@ -360,6 +369,20 @@ func (m model) View() string {
 			"",
 			"DELETED"))
 		b.WriteString(header)
+	case tabProjects:
+		sizeLabel := "SIZE▼"
+		touchLabel := "LAST TOUCH"
+		if m.projectsSortIdle {
+			sizeLabel = "SIZE"
+			touchLabel = "LAST TOUCH▲"
+		}
+		header := headerStyle.Render(fmt.Sprintf("  %*s %9s %4s  %-*s  %-10s  %-10s",
+			barWidth, "",
+			sizeLabel, "%",
+			nameWidth, "PROJECT · ARTIFACT",
+			"",
+			touchLabel))
+		b.WriteString(header)
 	}
 	b.WriteString("\n")
 
@@ -385,6 +408,18 @@ func (m model) View() string {
 	if m.activeTab == tabLargest && len(t.entries) == 0 && m.deepScanning {
 		b.WriteString(scanningStyle.Render("  Walking directory tree…"))
 		b.WriteString("\n")
+	}
+
+	// Empty-state messages for PROJECTS tab
+	if m.activeTab == tabProjects && len(t.entries) == 0 {
+		if m.projectsScanning {
+			b.WriteString(scanningStyle.Render("  Scanning projects…"))
+			b.WriteString("\n")
+		} else if m.projectsLoaded {
+			root := strings.Join(m.launchRoots, ", ")
+			b.WriteString(staleStyle.Render("  no projects found under " + root + "; run cull from your projects directory"))
+			b.WriteString("\n")
+		}
 	}
 
 	for i := offset; i < end; i++ {
@@ -450,6 +485,9 @@ func (m model) View() string {
 		if m.activeTab == tabCaches && e.Path != "" && e.Path != dockerEntryPath {
 			displayName = e.Name + " · " + e.Path
 		}
+		if m.activeTab == tabProjects && e.Path != "" {
+			displayName = m.projectsDisplayName(e)
+		}
 
 		var row string
 		if isCursor {
@@ -483,6 +521,17 @@ func (m model) View() string {
 			plain := fmt.Sprintf("%s%s %9s %4s  %-*s  %-10s  %-10s",
 				markerText, emptyBar, sizeFormatted, "", nameWidth, truncName, createdStr, updatedStr)
 			row = staleStyle.Render(plain)
+		} else if m.activeTab == tabProjects && isIdleSafe(e) {
+			// Long-idle project — whole row in green: safe to clean
+			plainBar := strings.Repeat(" ", barWidth)
+			if e.Sized {
+				plainBar = proportionBarPlain(e.Size, maxSize, barWidth)
+			}
+			truncName := truncateName(displayName, nameWidth)
+			pctStr := formatPercent(e.Size, totalSize)
+			plain := fmt.Sprintf("%s%s %9s %4s  %-*s  %-10s  %-10s",
+				markerText, plainBar, sizeFormatted, pctStr, nameWidth, truncName, createdStr, updatedStr)
+			row = idleRowStyle.Render(plain)
 		} else if isActiveScanning {
 			// Gradient wave on bar + size + pct only; name/dates use normal styles
 			var plainBar string
@@ -712,6 +761,17 @@ func (m model) View() string {
 			status += " · caches total: " + formatSize(cachesTotal)
 			if m.cachesNote != "" {
 				status += " · " + m.cachesNote
+			}
+		}
+		if m.activeTab == tabProjects {
+			var reclaimable int64
+			for _, e := range m.tabs[tabProjects].allEntries {
+				if e.Sized {
+					reclaimable += e.Size
+				}
+			}
+			if reclaimable > 0 {
+				status += " · reclaimable: " + formatSize(reclaimable)
 			}
 		}
 		// Mode indicators

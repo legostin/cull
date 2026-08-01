@@ -232,3 +232,54 @@ func TestRenderTabBar_CachesCount(t *testing.T) {
 		t.Errorf("tab bar %q must contain CACHES (2)", bar)
 	}
 }
+
+func TestProjectsDisplayName(t *testing.T) {
+	m := newTestModel()
+	m.projectMeta = map[string]projectArtifact{
+		"/p/app/node_modules": {ProjectName: "app", Kind: "node_modules"},
+		"/p/api/dist":         {ProjectName: "api", Kind: "dist", Caution: true},
+	}
+	got := m.projectsDisplayName(Entry{Name: "app", Path: "/p/app/node_modules"})
+	if got != "app · node_modules" {
+		t.Errorf("got %q, want %q", got, "app · node_modules")
+	}
+	got = m.projectsDisplayName(Entry{Name: "api", Path: "/p/api/dist"})
+	if got != "api · dist · may be needed" {
+		t.Errorf("got %q, want %q", got, "api · dist · may be needed")
+	}
+}
+
+func TestProjectsTabBarAndEmptyState(t *testing.T) {
+	m := newTestModel()
+	m.activeTab = tabProjects
+	m.projectsScanning = true
+	out := m.View()
+	if !strings.Contains(out, "PROJECTS") {
+		t.Error("tab bar must show PROJECTS")
+	}
+	if !strings.Contains(out, "Scanning projects") {
+		t.Error("scanning empty state missing")
+	}
+	m.projectsScanning = false
+	m.projectsLoaded = true
+	out = m.View()
+	if !strings.Contains(out, "no projects found under") {
+		t.Error("empty-result hint missing")
+	}
+}
+
+func TestProjectsStatusBarReclaimable(t *testing.T) {
+	m := newTestModel()
+	m.activeTab = tabProjects
+	m.projectsLoaded = true
+	pt := &m.tabs[tabProjects]
+	pt.allEntries = []Entry{
+		{Name: "a", Path: "/p/a", Size: 1 << 30, Sized: true},
+		{Name: "b", Path: "/p/b", Size: 1 << 30, Sized: true},
+	}
+	m.applyFilterForTab(tabProjects)
+	out := m.View()
+	if !strings.Contains(out, "reclaimable: 2.0 GB") {
+		t.Errorf("status bar must show total reclaimable, got:\n%s", out)
+	}
+}
