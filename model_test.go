@@ -908,4 +908,3 @@ func TestProjectSizeMsgSetsSizeAndResorts(t *testing.T) {
 		t.Errorf("sized row must sort first: %+v", pt2.entries)
 	}
 }
-
