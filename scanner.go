@@ -62,7 +62,9 @@ func cachePath(dirPath string) string {
 		return ""
 	}
 	h := crc32.ChecksumIEEE([]byte(dirPath))
-	return filepath.Join(cd, fmt.Sprintf("%08x.gob", h))
+	// v2: sizes switched from logical length to allocated blocks — old cached
+	// sizes are inflated for sparse files and must not be reused.
+	return filepath.Join(cd, fmt.Sprintf("%08x-v2.gob", h))
 }
 
 // loadDirCache attempts to load cached entries for the given directory.
@@ -214,7 +216,7 @@ func quickScanDir(path string) ([]Entry, error) {
 			if infoErr == nil {
 				entry.ModTime = info.ModTime()
 				if !de.IsDir() {
-					entry.Size = info.Size()
+					entry.Size = diskUsage(info)
 				}
 				if eagerBirthTime {
 					entry.CreateTime = extractBirthTime(fullPath, info)
@@ -343,6 +345,7 @@ func startDeepScan(root string, topN int, firstLevelDirs []string) chan deepScan
 		heap.Init(h)
 		dirSizes := make(map[string]int64, len(firstLevelDirs))
 		scanningDirs := make(map[string]bool, len(firstLevelDirs))
+		seenInodes := make(map[[2]uint64]bool) // hardlinked files counted once
 
 		// --- Phase 1: scan root-level files (not inside any subdir) ---
 		rootEntries, _ := os.ReadDir(root)
@@ -355,7 +358,13 @@ func startDeepScan(root string, topN int, firstLevelDirs []string) chan deepScan
 			if err != nil {
 				continue
 			}
-			size := info.Size()
+			if dev, ino, ok := fileID(info); ok {
+				if seenInodes[[2]uint64{dev, ino}] {
+					continue
+				}
+				seenInodes[[2]uint64{dev, ino}] = true
+			}
+			size := diskUsage(info)
 			if h.Len() < topN {
 				heap.Push(h, Entry{
 					Name:    de.Name(),
@@ -457,9 +466,16 @@ func startDeepScan(root string, topN int, firstLevelDirs []string) chan deepScan
 						if err != nil {
 							return nil
 						}
-						size := info.Size()
+						size := diskUsage(info)
 
 						mu.Lock()
+						if dev, ino, ok := fileID(info); ok {
+							if seenInodes[[2]uint64{dev, ino}] {
+								mu.Unlock()
+								return nil
+							}
+							seenInodes[[2]uint64{dev, ino}] = true
+						}
 						dirSizes[dirPath] += size
 
 						if h.Len() < topN {

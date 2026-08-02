@@ -71,8 +71,11 @@ func TestSumPathsSize(t *testing.T) {
 	mustWriteFile(t, filepath.Join(dir1, "sub", "f2"), 50)
 	mustWriteFile(t, filepath.Join(dir2, "f3"), 7)
 
-	if got := sumPathsSize([]string{dir1, dir2}); got != 157 {
-		t.Errorf("sumPathsSize = %d, want 157", got)
+	// Sizes are allocated blocks (du semantics): at least the 157 payload
+	// bytes, at most three files rounded up to whole blocks.
+	got := sumPathsSize([]string{dir1, dir2})
+	if got < 157 || got > 3*1<<20 {
+		t.Errorf("sumPathsSize = %d, want between 157 and 3 blocks", got)
 	}
 	if got := sumPathsSize([]string{filepath.Join(dir1, "nope")}); got != 0 {
 		t.Errorf("missing path: sumPathsSize = %d, want 0", got)

@@ -155,9 +155,11 @@ func parseDockerPruneOutput(out string) int64 {
 	return parseDockerSize(rest)
 }
 
-// sumPathsSize walks all paths and sums regular-file sizes. Errors are skipped.
+// sumPathsSize walks all paths and sums the disk usage of regular files,
+// counting each hardlinked inode once. Errors are skipped.
 func sumPathsSize(paths []string) int64 {
 	var total int64
+	seen := make(map[[2]uint64]bool)
 	for _, p := range paths {
 		_ = filepath.WalkDir(p, func(_ string, d fs.DirEntry, err error) error {
 			if err != nil {
@@ -165,7 +167,13 @@ func sumPathsSize(paths []string) int64 {
 			}
 			if d.Type().IsRegular() {
 				if info, err := d.Info(); err == nil {
-					total += info.Size()
+					if dev, ino, ok := fileID(info); ok {
+						if seen[[2]uint64{dev, ino}] {
+							return nil
+						}
+						seen[[2]uint64{dev, ino}] = true
+					}
+					total += diskUsage(info)
 				}
 			}
 			return nil
