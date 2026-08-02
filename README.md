@@ -91,6 +91,18 @@ Press `f` and type to instantly filter entries. Great for finding files by exten
 
 ![filter](docs/filtration.gif)
 
+### Honest sizes
+
+Sizes are what you'd actually free by deleting — allocated blocks, not logical length (`du` semantics). Sparse disk images (Docker, OrbStack, UTM) no longer show terabytes that don't exist, hardlinked files are counted once, and on macOS APFS clones (Xcode simulators, Chrome's update clone) report only their private bytes. Network mounts and other filesystems are never crossed, so scanning your home dir won't wake a sleeping VM.
+
+### System paths are protected
+
+OS-managed locations — `/var/folders`, `/private/tmp`, `/System`, app Containers, `/proc` on Linux — carry a `⚠ sys` badge, and deleting anything there always asks for confirmation, even with `-y`: those files belong to running apps and clean themselves up.
+
+### Fast
+
+The deep scan uses a work-stealing parallel walk across all cores, and on macOS reads directory attributes in bulk (`getattrlistbulk`) — one syscall covers dozens of files.
+
 ## Keybindings
 
 | Key | Action |
@@ -111,6 +123,7 @@ Press `f` and type to instantly filter entries. Great for finding files by exten
 | `tab` | Toggle trash / permanent delete |
 | `shift+tab` | Switch tabs (Browse / Largest / Caches / Projects / History) |
 | `space` | Quick Look preview (macOS) |
+| `ctrl+l` | Force full repaint |
 | `?` | Help |
 | `q` / `ctrl+c` | Quit |
 
