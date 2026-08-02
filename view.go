@@ -398,15 +398,8 @@ func (m model) View() string {
 	}
 	b.WriteString("\n")
 
-	// Calculate visible rows
-	usedLines := 11 // logo(4) + path + tabbar + sep + header + sep + help + status
-	if m.mode == modeConfirm {
-		usedLines += 2
-	}
-	visibleRows := m.height - usedLines
-	if visibleRows < 1 {
-		visibleRows = 1
-	}
+	// Calculate visible rows (must mirror clampOffset via visibleRowCount)
+	visibleRows := m.visibleRowCount()
 
 	offset := t.offset
 
@@ -421,10 +414,14 @@ func (m model) View() string {
 		b.WriteString(m.renderMap(contentWidth, visibleRows))
 	} else {
 
+		// Empty-state hints occupy row lines and count toward visibleRows.
+		hintLines := 0
+
 		// Empty-state message for LARGEST tab during scan
 		if m.activeTab == tabLargest && len(t.entries) == 0 && m.deepScanning {
 			b.WriteString(scanningStyle.Render("  Walking directory tree…"))
 			b.WriteString("\n")
+			hintLines++
 		}
 
 		// Empty-state messages for PROJECTS tab
@@ -432,10 +429,12 @@ func (m model) View() string {
 			if m.projectsScanning {
 				b.WriteString(scanningStyle.Render("  Scanning projects…"))
 				b.WriteString("\n")
+				hintLines++
 			} else if m.projectsLoaded {
 				root := strings.Join(m.projectsRoots, ", ")
 				b.WriteString(staleStyle.Render("  no projects found under " + root + "; run cull from your projects directory"))
 				b.WriteString("\n")
+				hintLines++
 			}
 		}
 
@@ -645,8 +644,8 @@ func (m model) View() string {
 			b.WriteString("\n")
 		}
 
-		// Pad remaining space
-		for i := end - offset; i < visibleRows; i++ {
+		// Pad remaining space (hints already consumed part of the budget)
+		for i := end - offset + hintLines; i < visibleRows; i++ {
 			b.WriteString("\n")
 		}
 
@@ -944,6 +943,7 @@ func (m model) viewHelp(b *strings.Builder, contentWidth int) string {
 		"",
 		"  OTHER",
 		"    ?            show this help",
+		"    ctrl+l       force full repaint (fixes garbled screen)",
 		"    q / ctrl+c   quit",
 		"",
 		"  FLAGS",

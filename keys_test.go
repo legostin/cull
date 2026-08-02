@@ -804,3 +804,11 @@ func TestProjectsStaleLoadDiscarded(t *testing.T) {
 		t.Error("a load result from a stale root must be discarded")
 	}
 }
+
+func TestKey_CtrlL_ForcesRepaint(t *testing.T) {
+	m := newKeysTestModel()
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	if cmd == nil {
+		t.Error("ctrl+l must issue a repaint command")
+	}
+}

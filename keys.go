@@ -15,6 +15,12 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
+	// ctrl+l forces a full repaint — external programs writing to the
+	// terminal (kernel NFS warnings, wall) corrupt the alt screen.
+	if msg.String() == "ctrl+l" {
+		return m, tea.ClearScreen
+	}
+
 	if m.mode == modeFilter {
 		return m.handleFilterKey(msg)
 	}

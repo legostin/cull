@@ -342,3 +342,68 @@ func TestHelpLineShowsMapToggle(t *testing.T) {
 		t.Error("non-BROWSE tabs must not advertise the map toggle")
 	}
 }
+
+// viewLines counts the lines a rendered frame occupies.
+func viewLines(out string) int {
+	return strings.Count(out, "\n") + 1
+}
+
+func TestViewNeverExceedsTerminalHeight(t *testing.T) {
+	base := func() model {
+		m := newTestModel()
+		tab := &m.tabs[tabBrowse]
+		tab.allEntries = []Entry{
+			{Name: "..", Path: "/tmp", IsDir: true, IsParent: true},
+			{Name: "a", Path: "/t/a", Size: 100, Sized: true},
+			{Name: "b", Path: "/t/b", Size: 50, Sized: true},
+		}
+		tab.entries = append([]Entry{}, tab.allEntries...)
+		return m
+	}
+
+	cases := []struct {
+		name string
+		mut  func(m *model)
+	}{
+		{"plain", func(m *model) {}},
+		{"error line", func(m *model) { m.errMsg = "permission denied" }},
+		{"confirm", func(m *model) {
+			m.mode = modeConfirm
+			m.tab().selected["/t/a"] = true
+		}},
+		{"confirm with error", func(m *model) {
+			m.mode = modeConfirm
+			m.tab().selected["/t/a"] = true
+			m.errMsg = "boom"
+		}},
+		{"largest scanning empty", func(m *model) {
+			m.activeTab = tabLargest
+			m.deepScanning = true
+			m.tabs[tabLargest] = newTabState()
+		}},
+		{"projects scanning empty", func(m *model) {
+			m.activeTab = tabProjects
+			m.projectsScanning = true
+		}},
+		{"projects empty loaded with error", func(m *model) {
+			m.activeTab = tabProjects
+			m.projectsLoaded = true
+			m.errMsg = "boom"
+		}},
+		{"map mode", func(m *model) { m.browseMap = true }},
+		{"map mode with error", func(m *model) {
+			m.browseMap = true
+			m.errMsg = "boom"
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := base()
+			tc.mut(&m)
+			out := m.View()
+			if got := viewLines(out); got > m.height {
+				t.Errorf("frame is %d lines, terminal is %d — view overflows and breaks scroll", got, m.height)
+			}
+		})
+	}
+}

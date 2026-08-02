@@ -305,15 +305,27 @@ func (m *model) applyFilterForTab(t tabID) {
 	tab.entries = filtered
 }
 
+// visibleRowCount returns how many entry rows fit in the terminal, matching
+// exactly what View renders around them. Keeping the frame at most
+// m.height lines is critical: a taller frame scrolls the alt screen and
+// corrupts bubbletea's diff-based repaint.
+func (m *model) visibleRowCount() int {
+	rows := m.height - 11 // logo(4) + path + tabbar + sep + header + sep + help + status
+	if m.mode == modeConfirm {
+		rows -= 2
+	}
+	if m.errMsg != "" {
+		rows--
+	}
+	if rows < 1 {
+		rows = 1
+	}
+	return rows
+}
+
 // clampOffset adjusts offset so the cursor stays within the visible viewport.
 func (m *model) clampOffset() {
-	visibleRows := m.height - 11 // logo(4) + path + tabbar + sep + header + sep + help + status
-	if m.mode == modeConfirm {
-		visibleRows -= 2
-	}
-	if visibleRows < 1 {
-		visibleRows = 1
-	}
+	visibleRows := m.visibleRowCount()
 	t := m.tab()
 	if t.cursor < t.offset {
 		t.offset = t.cursor
