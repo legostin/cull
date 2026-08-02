@@ -766,3 +766,41 @@ func TestKey_M_ParksCursorOffParent(t *testing.T) {
 		t.Error("entering map mode must move the cursor off the parent entry")
 	}
 }
+
+func TestProjectsTabFollowsCurrentDir(t *testing.T) {
+	m := newKeysTestModel()
+	m.projectsLoaded = true
+	m.projectsRoots = []string{"/tmp/test"}
+	m.path = "/tmp/test/sub" // user navigated deeper since the last scan
+
+	result, cmd := m.switchToTab(tabProjects)
+	rm := result.(model)
+	if !rm.projectsScanning || cmd == nil {
+		t.Fatal("entering PROJECTS after a path change must rescan")
+	}
+	if len(rm.projectsRoots) != 1 || rm.projectsRoots[0] != "/tmp/test/sub" {
+		t.Errorf("projectsRoots = %v, want [/tmp/test/sub]", rm.projectsRoots)
+	}
+
+	// same path again: no rescan
+	rm.projectsScanning = false
+	rm.projectsLoaded = true
+	result2, _ := rm.switchToTab(tabProjects)
+	if result2.(model).projectsScanning {
+		t.Error("entering PROJECTS with an unchanged path must not rescan")
+	}
+}
+
+func TestProjectsStaleLoadDiscarded(t *testing.T) {
+	m := newKeysTestModel()
+	m.projectsRoots = []string{"/tmp/new"}
+	msg := projectsLoadedMsg{
+		root:    "/tmp/old",
+		entries: []Entry{{Name: "x", Path: "/tmp/old/x/node_modules"}},
+	}
+	result, _ := m.Update(msg)
+	rm := result.(model)
+	if len(rm.tabs[tabProjects].allEntries) != 0 {
+		t.Error("a load result from a stale root must be discarded")
+	}
+}

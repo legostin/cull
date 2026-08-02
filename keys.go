@@ -189,6 +189,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.projectsScanning {
 				return m, nil
 			}
+			m.projectsRoots = m.desiredProjectsRoots()
 			m.tabs[tabProjects] = newTabState()
 			m.projectsScanning = true
 			m.projectsLoaded = false
@@ -417,10 +418,17 @@ func (m model) switchToTab(id tabID) (tea.Model, tea.Cmd) {
 		m.cachesNote = ""
 		return m, tea.Batch(cmd, loadCachesCmd())
 	case tabProjects:
-		if !m.projectsLoaded && !m.projectsScanning {
-			m.projectsScanning = true
-			return m, tea.Batch(cmd, loadProjectsCmd(m.projectsRoots))
+		roots := m.desiredProjectsRoots()
+		fresh := m.projectsLoaded || m.projectsScanning
+		if fresh && joinRoots(m.projectsRoots) == joinRoots(roots) {
+			break // results (or a running scan) already match the current dir
 		}
+		m.projectsRoots = roots
+		m.tabs[tabProjects] = newTabState()
+		m.projectMeta = nil
+		m.projectsLoaded = false
+		m.projectsScanning = true
+		return m, tea.Batch(cmd, loadProjectsCmd(roots))
 	}
 	return m, cmd
 }

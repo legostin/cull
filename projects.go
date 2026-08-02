@@ -156,8 +156,14 @@ func matchArtifacts(names []string) map[string]bool {
 
 // projectsLoadedMsg is sent when the PROJECTS walk completes.
 type projectsLoadedMsg struct {
+	root      string // joined roots the walk ran from; stale results are discarded
 	entries   []Entry
 	artifacts map[string]projectArtifact // keyed by artifact path
+}
+
+// joinRoots builds the stale-detection key for a set of scan roots.
+func joinRoots(roots []string) string {
+	return strings.Join(roots, "\x00")
 }
 
 // projectSizeMsg carries the computed size of one artifact row.
@@ -184,7 +190,7 @@ func loadProjectsCmd(roots []string) tea.Cmd {
 			})
 			meta[a.Path] = a
 		}
-		return projectsLoadedMsg{entries: entries, artifacts: meta}
+		return projectsLoadedMsg{root: joinRoots(roots), entries: entries, artifacts: meta}
 	}
 }
 

@@ -199,7 +199,7 @@ type model struct {
 	projectsScanning bool
 	projectsLoaded   bool
 	projectsSortIdle bool     // t toggles size (false) / idle (true) sort
-	projectsRoots    []string // scan roots; widen when browsing above them
+	projectsRoots    []string // roots of the last PROJECTS scan; follows the browse path
 
 	// CLI flags
 	readOnly    bool
@@ -459,6 +459,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case projectsLoadedMsg:
+		if msg.root != joinRoots(m.projectsRoots) {
+			return m, nil // stale result from a previous root, discard
+		}
 		pt := &m.tabs[tabProjects]
 		*pt = newTabState()
 		pt.allEntries = msg.entries
@@ -894,16 +897,6 @@ func (m model) navigateUp() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Navigating above the PROJECTS scan root widens it: reset the tab so
-	// the next PROJECTS visit (or r) rescans from the new, higher root.
-	if len(m.projectsRoots) == 1 && isStrictAncestor(parent, m.projectsRoots[0]) {
-		m.projectsRoots = []string{parent}
-		m.projectsLoaded = false
-		m.projectsScanning = false
-		m.projectMeta = nil
-		m.tabs[tabProjects] = newTabState()
-	}
-
 	prevDir := m.path
 	bt := &m.tabs[tabBrowse]
 
@@ -989,16 +982,13 @@ func (m model) navigateUp() (tea.Model, tea.Cmd) {
 	return m, quickScanCmd(parent)
 }
 
-// isStrictAncestor reports whether anc is a proper ancestor directory of path.
-func isStrictAncestor(anc, path string) bool {
-	if anc == path {
-		return false
+// desiredProjectsRoots returns the roots the PROJECTS scan should run from:
+// the current browse directory (all roots in the virtual multi-root view).
+func (m *model) desiredProjectsRoots() []string {
+	if m.isVirtualRoot {
+		return m.rootPaths
 	}
-	sep := string(filepath.Separator)
-	if !strings.HasSuffix(anc, sep) {
-		anc += sep
-	}
-	return strings.HasPrefix(path, anc)
+	return []string{m.path}
 }
 
 // navigateToVirtualRoot returns to the virtual multi-root view.
