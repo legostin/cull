@@ -40,6 +40,7 @@ cull ~/Downloads            # scan specific path
 cull --read-only            # browse without deletion
 cull -y                     # skip delete confirmation
 cull -n 5000                # show up to 5000 items in Largest tab
+cull --no-mouse             # disable mouse support
 ```
 
 ## Features
@@ -79,6 +80,10 @@ The PROJECTS tab scans down from the launch path for project build artifacts —
 ### See the map
 
 Press `m` on the Browse tab to switch to a treemap: every file and directory becomes a rectangle sized by bytes. Move between rectangles with `h/j/k/l`, `enter` zooms into a directory, `esc` goes up — and `s`/`d` select and delete right from the map.
+
+### Use the mouse
+
+Click a row or a map rectangle to move the cursor, double-click to enter a directory, right-click to select, scroll with the wheel, click tab names to switch. Hold Shift (or Option on macOS) to select terminal text as usual; `--no-mouse` turns mouse support off entirely.
 
 ### Filter by name
 

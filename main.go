@@ -13,6 +13,7 @@ func main() {
 	topN := flag.Int("n", 1000, "max items in LARGEST tab")
 	readOnly := flag.Bool("read-only", false, "read-only mode: disable deletion")
 	skipConfirm := flag.Bool("y", false, "skip delete confirmation")
+	noMouse := flag.Bool("no-mouse", false, "disable mouse support")
 	flag.Parse()
 	args := flag.Args()
 
@@ -38,7 +39,11 @@ func main() {
 		m = newMultiRootModel(absPaths, *topN, *readOnly, *skipConfirm)
 	}
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	if !*noMouse {
+		opts = append(opts, tea.WithMouseCellMotion())
+	}
+	p := tea.NewProgram(m, opts...)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
