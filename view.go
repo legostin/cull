@@ -504,6 +504,10 @@ func (m model) View() string {
 			if m.activeTab == tabProjects && e.Path != "" {
 				displayName = m.projectsDisplayName(e)
 			}
+			if (m.activeTab == tabBrowse || m.activeTab == tabLargest) &&
+				!e.IsParent && isSystemPath(e.Path) {
+				displayName += " ⚠ sys"
+			}
 
 			var row string
 			if isCursor {

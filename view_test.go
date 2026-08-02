@@ -407,3 +407,14 @@ func TestViewNeverExceedsTerminalHeight(t *testing.T) {
 		})
 	}
 }
+
+func TestSystemPathBadge(t *testing.T) {
+	m := newTestModel()
+	tab := &m.tabs[tabBrowse]
+	tab.allEntries = []Entry{{Name: "folders", Path: "/private/var/folders", Size: 5, Sized: true, IsDir: true}}
+	tab.entries = append([]Entry{}, tab.allEntries...)
+	out := m.View()
+	if !strings.Contains(out, "⚠ sys") {
+		t.Error("system-managed rows must carry the sys badge")
+	}
+}
