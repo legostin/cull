@@ -147,6 +147,10 @@ type model struct {
 	// BROWSE shows treemap instead of list
 	browseMap bool
 
+	// Double-click tracking (list row index or entry-count+rect index)
+	lastClickRow int
+	lastClickAt  time.Time
+
 	// Sort mode
 	sortBy sortMode
 
@@ -538,6 +542,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.scanAnimPhase++
 		return m, scanAnimTickCmd(m.scanAnimGen)
+
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)

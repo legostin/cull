@@ -91,21 +91,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
-		m.activeTab = order[(idx+1)%len(order)]
-		cmd := m.resetNameScroll()
-		switch m.activeTab {
-		case tabHistory:
-			return m, tea.Batch(cmd, m.loadTrashTab())
-		case tabCaches:
-			m.cachesNote = ""
-			return m, tea.Batch(cmd, loadCachesCmd())
-		case tabProjects:
-			if !m.projectsLoaded && !m.projectsScanning {
-				m.projectsScanning = true
-				return m, tea.Batch(cmd, loadProjectsCmd(m.projectsRoots))
-			}
-		}
-		return m, cmd
+		return m.switchToTab(order[(idx+1)%len(order)])
 
 	case "j", "down":
 		if t.cursor < len(t.entries)-1 {
@@ -416,6 +402,27 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// switchToTab activates a tab with the same side effects as reaching it via
+// shift+tab: history/caches reload, first projects scan. Shared by the
+// keyboard cycle and tab bar clicks.
+func (m model) switchToTab(id tabID) (tea.Model, tea.Cmd) {
+	m.activeTab = id
+	cmd := m.resetNameScroll()
+	switch id {
+	case tabHistory:
+		return m, tea.Batch(cmd, m.loadTrashTab())
+	case tabCaches:
+		m.cachesNote = ""
+		return m, tea.Batch(cmd, loadCachesCmd())
+	case tabProjects:
+		if !m.projectsLoaded && !m.projectsScanning {
+			m.projectsScanning = true
+			return m, tea.Batch(cmd, loadProjectsCmd(m.projectsRoots))
+		}
+	}
+	return m, cmd
 }
 
 // buildDeleteCmd creates a delete command that records TrashRecords when using trash mode.

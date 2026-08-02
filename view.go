@@ -185,12 +185,15 @@ func proportionBarPlain(size, maxSize int64, barWidth int) string {
 	return strings.Repeat(" ", barWidth-filled) + strings.Repeat("▐", filled)
 }
 
-// renderTabBar renders the tab bar between path and separator.
-func (m model) renderTabBar(contentWidth int) string {
-	type tabInfo struct {
-		id   tabID
-		name string
-	}
+// tabInfo is one tab bar entry: id + fully decorated label.
+type tabInfo struct {
+	id   tabID
+	name string
+}
+
+// tabInfos returns the visible tabs with their decorated labels — shared by
+// the tab bar renderer and the mouse hit test so their layouts never drift.
+func (m model) tabInfos() []tabInfo {
 	tabs := []tabInfo{
 		{tabBrowse, "BROWSE"},
 		{tabLargest, "LARGEST"},
@@ -200,9 +203,7 @@ func (m model) renderTabBar(contentWidth int) string {
 	if m.trashRegistry != nil && len(m.trashRegistry.Records) > 0 {
 		tabs = append(tabs, tabInfo{tabHistory, "HISTORY"})
 	}
-
-	var parts []string
-	for _, ti := range tabs {
+	for i, ti := range tabs {
 		label := ti.name
 		// Add scanning indicator for LARGEST tab while deep scan runs
 		if ti.id == tabLargest && ti.id != m.activeTab && m.deepScanning {
@@ -226,14 +227,21 @@ func (m model) renderTabBar(contentWidth int) string {
 				label += fmt.Sprintf(" (%d)", n)
 			}
 		}
+		tabs[i].name = label
+	}
+	return tabs
+}
 
+// renderTabBar renders the tab bar between path and separator.
+func (m model) renderTabBar(contentWidth int) string {
+	var parts []string
+	for _, ti := range m.tabInfos() {
 		if ti.id == m.activeTab {
-			parts = append(parts, tabActiveStyle.Render("["+label+"]"))
+			parts = append(parts, tabActiveStyle.Render("["+ti.name+"]"))
 		} else {
-			parts = append(parts, tabInactiveStyle.Render(" "+label+" "))
+			parts = append(parts, tabInactiveStyle.Render(" "+ti.name+" "))
 		}
 	}
-
 	return " " + strings.Join(parts, " ")
 }
 
