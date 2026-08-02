@@ -171,3 +171,20 @@ func mustWriteFile(t *testing.T, path string, size int) {
 		t.Fatal(err)
 	}
 }
+
+func TestParseTMSnapshotDates(t *testing.T) {
+	out := `Snapshots for volume group containing disk /:
+com.apple.os.update-5514FF97DEE9C60C7FBF462B06A418D5FC4A882D5AF41D2BAF0A1419FB9B9F86
+com.apple.TimeMachine.2026-08-01-101112.local
+com.apple.TimeMachine.2026-08-02-093000.local
+com.apple.os.update-MSUPrepareUpdate
+`
+	dates := parseTMSnapshotDates([]byte(out))
+	want := []string{"2026-08-01-101112", "2026-08-02-093000"}
+	if len(dates) != 2 || dates[0] != want[0] || dates[1] != want[1] {
+		t.Errorf("parseTMSnapshotDates = %v, want %v", dates, want)
+	}
+	if got := parseTMSnapshotDates([]byte("Snapshots for volume group containing disk /:\ncom.apple.os.update-X\n")); len(got) != 0 {
+		t.Errorf("os.update-only output must yield no deletable snapshots, got %v", got)
+	}
+}

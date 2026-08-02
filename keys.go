@@ -158,7 +158,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if t.cursor < len(t.entries) && !t.entries[t.cursor].IsParent &&
-			t.entries[t.cursor].Path != dockerEntryPath {
+			t.entries[t.cursor].Path != dockerEntryPath &&
+			t.entries[t.cursor].Path != tmSnapEntryPath {
 			p := t.entries[t.cursor].Path
 			if t.selected[p] {
 				delete(t.selected, p)
@@ -182,7 +183,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				lo, hi = hi, lo
 			}
 			for i := lo; i <= hi; i++ {
-				if !t.entries[i].IsParent && t.entries[i].Path != dockerEntryPath {
+				if !t.entries[i].IsParent && t.entries[i].Path != dockerEntryPath &&
+					t.entries[i].Path != tmSnapEntryPath {
 					t.selected[t.entries[i].Path] = true
 				}
 			}
@@ -273,6 +275,14 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			t.cursor < len(t.entries) && t.entries[t.cursor].Path == dockerEntryPath {
 			m.mode = modeConfirm
 			m.confirmDocker = true
+			return m, nil
+		}
+
+		// Snapshot deletion is not restorable — always confirmed too.
+		if m.activeTab == tabCaches && len(t.selected) == 0 &&
+			t.cursor < len(t.entries) && t.entries[t.cursor].Path == tmSnapEntryPath {
+			m.mode = modeConfirm
+			m.confirmSnap = true
 			return m, nil
 		}
 
@@ -499,6 +509,9 @@ func (m model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.confirmDocker {
 			return m, dockerPruneCmd()
 		}
+		if m.confirmSnap {
+			return m, tmSnapDeleteCmd(tmSnapshotDates())
+		}
 
 		// On trash tab, confirm means purge
 		if m.activeTab == tabHistory {
@@ -527,6 +540,7 @@ func (m model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "n", "esc":
 		m.confirmDocker = false
+		m.confirmSnap = false
 		m.mode = modeNormal
 	}
 

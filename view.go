@@ -498,7 +498,8 @@ func (m model) View() string {
 					displayName = rel
 				}
 			}
-			if m.activeTab == tabCaches && e.Path != "" && e.Path != dockerEntryPath {
+			if m.activeTab == tabCaches && e.Path != "" && e.Path != dockerEntryPath &&
+				e.Path != tmSnapEntryPath {
 				displayName = e.Name + " · " + e.Path
 			}
 			if m.activeTab == tabProjects && e.Path != "" {
@@ -674,7 +675,9 @@ func (m model) View() string {
 			}
 		}
 		var confirmText string
-		if m.confirmDocker {
+		if m.confirmSnap {
+			confirmText = "  Delete ALL local Time Machine snapshots? Frees purgeable space; snapshots cannot be restored. [y/n]"
+		} else if m.confirmDocker {
 			confirmText = "  Run docker system prune -a -f? Removes ALL unused images, stopped containers, networks and build cache. Cannot be restored. [y/n]"
 		} else if m.activeTab == tabHistory {
 			confirmText = fmt.Sprintf("  Purge %d items (%s) permanently? [y/n]", count, formatSize(totalSize))
@@ -790,7 +793,7 @@ func (m model) View() string {
 		if m.activeTab == tabCaches {
 			var cachesTotal int64
 			for _, e := range t.entries {
-				if e.Sized && e.Path != dockerEntryPath {
+				if e.Sized && e.Path != dockerEntryPath && e.Path != tmSnapEntryPath {
 					cachesTotal += e.Size
 				}
 			}

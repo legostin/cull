@@ -812,3 +812,33 @@ func TestKey_CtrlL_ForcesRepaint(t *testing.T) {
 		t.Error("ctrl+l must issue a repaint command")
 	}
 }
+
+func TestKey_D_TMSnapshotsRowConfirms(t *testing.T) {
+	m := newKeysTestModel()
+	m.activeTab = tabCaches
+	ct := &m.tabs[tabCaches]
+	ct.allEntries = []Entry{{Name: "Time Machine local snapshots (3)", Path: tmSnapEntryPath, Sized: true}}
+	ct.entries = ct.allEntries
+	ct.cursor = 0
+	m.skipConfirm = true // even -y must not skip
+
+	result, _ := m.Update(keyMsg("d"))
+	rm := result.(model)
+	if rm.mode != modeConfirm || !rm.confirmSnap {
+		t.Error("d on the snapshots row must open the snapshot confirm dialog")
+	}
+}
+
+func TestKey_S_CannotSelectSnapshotsRow(t *testing.T) {
+	m := newKeysTestModel()
+	m.activeTab = tabCaches
+	ct := &m.tabs[tabCaches]
+	ct.allEntries = []Entry{{Name: "snapshots", Path: tmSnapEntryPath, Sized: true}}
+	ct.entries = ct.allEntries
+	ct.cursor = 0
+	result, _ := m.Update(keyMsg("s"))
+	rm := result.(model)
+	if len(rm.tab().selected) != 0 {
+		t.Error("snapshots row must not be selectable")
+	}
+}

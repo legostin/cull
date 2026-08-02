@@ -121,7 +121,8 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		} else {
 			row := msg.Y - m.rowsStartY() + t.offset
 			if row < t.offset || row >= len(t.entries) ||
-				t.entries[row].IsParent || t.entries[row].Path == dockerEntryPath {
+				t.entries[row].IsParent || t.entries[row].Path == dockerEntryPath ||
+				t.entries[row].Path == tmSnapEntryPath {
 				return m, nil
 			}
 			path = t.entries[row].Path

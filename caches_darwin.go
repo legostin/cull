@@ -19,6 +19,7 @@ func platformCacheDefs() []cacheDef {
 		{Name: "Hugging Face hub", Paths: []string{"~/.cache/huggingface"}},
 		{Name: "CocoaPods cache", Paths: []string{"~/Library/Caches/CocoaPods"}},
 		{Name: "Xcode DerivedData", Paths: []string{"~/Library/Developer/Xcode/DerivedData"}},
+		{Name: "iOS device backups", Paths: []string{"~/Library/Application Support/MobileSync/Backup"}},
 		{Name: "JetBrains caches", Paths: []string{"~/Library/Caches/JetBrains"}},
 		{Name: "VS Code cache", Paths: []string{
 			"~/Library/Application Support/Code/Cache",

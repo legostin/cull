@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -192,6 +193,7 @@ type model struct {
 	// CACHES tab state
 	cachePathGroups map[string][]string // Entry.Path -> all existing paths of that cache
 	confirmDocker   bool                // confirm dialog is for docker prune
+	confirmSnap     bool                // confirm dialog is for TM snapshot deletion
 	cachesNote      string              // status-bar note, e.g. reclaimed space after prune
 
 	// PROJECTS tab state
@@ -503,6 +505,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errMsg = msg.err.Error()
 		return m, nil
 
+	case tmSnapDoneMsg:
+		m.mode = modeNormal
+		m.confirmSnap = false
+		m.cachesNote = fmt.Sprintf("deleted %d local snapshots", msg.deleted)
+		return m, loadCachesCmd()
+
+	case tmSnapErrMsg:
+		m.mode = modeNormal
+		m.confirmSnap = false
+		m.errMsg = msg.err.Error()
+		return m, nil
+
 	case restoreDoneMsg:
 		m.removeFromTrashTab(msg.restored)
 		if m.trashRegistry != nil {
@@ -592,7 +606,7 @@ func (m model) entryDisplayName(e Entry) string {
 		name = e.Path
 	}
 	if m.activeTab == tabCaches && e.Path != "" {
-		if e.Path == dockerEntryPath {
+		if e.Path == dockerEntryPath || e.Path == tmSnapEntryPath {
 			name = e.Name
 		} else {
 			name = e.Name + " · " + e.Path

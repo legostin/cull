@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -224,6 +225,13 @@ func loadCachesCmd() tea.Cmd {
 		if dockerAvailable() {
 			entries = append(entries, Entry{Name: "Docker (system prune -a)", Path: dockerEntryPath})
 		}
+		if n := len(tmSnapshotDates()); n > 0 {
+			entries = append(entries, Entry{
+				Name:  fmt.Sprintf("Time Machine local snapshots (%d)", n),
+				Path:  tmSnapEntryPath,
+				Sized: true,
+			})
+		}
 		return cachesLoadedMsg{entries: entries, pathGroups: groups}
 	}
 }
@@ -254,5 +262,71 @@ func dockerPruneCmd() tea.Cmd {
 			return dockerPruneErrMsg{err: fmt.Errorf("docker prune: %v: %s", err, bytes.TrimSpace(out))}
 		}
 		return dockerPruneDoneMsg{reclaimed: parseDockerPruneOutput(string(out))}
+	}
+}
+
+// tmSnapEntryPath is the sentinel Entry.Path for the Time Machine local
+// snapshots row on the CACHES tab (darwin only).
+const tmSnapEntryPath = "tmsnapshots://delete"
+
+// parseTMSnapshotDates extracts deletable Time Machine snapshot dates from
+// `tmutil listlocalsnapshots /` output. OS-update snapshots
+// (com.apple.os.update-*) are system-managed and excluded.
+func parseTMSnapshotDates(out []byte) []string {
+	var dates []string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		const prefix = "com.apple.TimeMachine."
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		d := strings.TrimPrefix(line, prefix)
+		d = strings.TrimSuffix(d, ".local")
+		if d != "" {
+			dates = append(dates, d)
+		}
+	}
+	return dates
+}
+
+// tmSnapshotDates lists deletable local Time Machine snapshots.
+func tmSnapshotDates() []string {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+	if _, err := exec.LookPath("tmutil"); err != nil {
+		return nil
+	}
+	out, err := exec.Command("tmutil", "listlocalsnapshots", "/").Output()
+	if err != nil {
+		return nil
+	}
+	return parseTMSnapshotDates(out)
+}
+
+// tmSnapDoneMsg is sent after snapshot deletion completes.
+type tmSnapDoneMsg struct {
+	deleted int
+}
+
+// tmSnapErrMsg is sent when snapshot deletion fails.
+type tmSnapErrMsg struct {
+	err error
+}
+
+// tmSnapDeleteCmd deletes all local Time Machine snapshots one by one.
+func tmSnapDeleteCmd(dates []string) tea.Cmd {
+	return func() tea.Msg {
+		deleted := 0
+		for _, d := range dates {
+			out, err := exec.Command("tmutil", "deletelocalsnapshots", d).CombinedOutput()
+			if err != nil {
+				return tmSnapErrMsg{err: fmt.Errorf(
+					"tmutil deletelocalsnapshots %s: %v: %s (try: sudo cull)",
+					d, err, bytes.TrimSpace(out))}
+			}
+			deleted++
+		}
+		return tmSnapDoneMsg{deleted: deleted}
 	}
 }
