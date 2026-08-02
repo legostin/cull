@@ -283,7 +283,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(t.selected) == 0 {
 			return m, nil
 		}
-		if m.skipConfirm {
+		// -y never skips confirmation for system-managed paths.
+		if m.skipConfirm && !anySystemPath(t.selected) {
 			return m, m.buildDeleteCmd(t)
 		}
 		m.mode = modeConfirm

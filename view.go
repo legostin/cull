@@ -679,6 +679,9 @@ func (m model) View() string {
 		} else {
 			confirmText = fmt.Sprintf("  PERMANENTLY delete %d items (%s)? [y/n]", count, formatSize(totalSize))
 		}
+		if !m.confirmDocker && m.activeTab != tabHistory && anySystemPath(t.selected) {
+			confirmText += "  ⚠ system-managed path: files may be in use by running apps"
+		}
 		b.WriteString(confirmStyle.Width(contentWidth).Render(confirmText))
 		b.WriteString("\n")
 	} else if m.mode == modeFilter {
