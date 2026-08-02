@@ -26,6 +26,10 @@ sudo apt update
 sudo apt install cull
 ```
 
+### Windows
+
+Download `cull_windows_amd64.zip` (or `arm64`) from the [latest release](https://github.com/legostin/cull/releases/latest) and run `cull.exe` from Windows Terminal. Windows support is early: sizes are logical (not allocated blocks) and trash restore is limited.
+
 ### From source
 
 ```
