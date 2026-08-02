@@ -516,41 +516,67 @@ func startDeepScan(root string, topN int, firstLevelDirs []string) chan deepScan
 						return
 					}
 
-					f, err := os.Open(task.dir)
-					if err != nil {
-						taskDone(task.root)
-						continue
-					}
-					des, _ := f.ReadDir(-1) // unsorted single batch
-					f.Close()
-
 					var files []fileRec
 					var subdirs []string
-					for _, de := range des {
-						// Skip symlinks entirely — they don't contribute to real disk usage.
-						if de.Type()&os.ModeSymlink != 0 {
-							continue
-						}
-						p := filepath.Join(task.dir, de.Name())
-						if de.IsDir() {
-							if mounts[p] {
-								continue // different filesystem
+					if recs, bulk := readDirBulk(task.dir); bulk {
+						// macOS fast path: one getattrlistbulk call covers
+						// names, types and clone-aware sizes for the dir.
+						for _, r := range recs {
+							if r.isSymlink {
+								continue
 							}
-							subdirs = append(subdirs, p)
-							continue
+							p := filepath.Join(task.dir, r.name)
+							if r.isDir {
+								if mounts[p] {
+									continue // different filesystem
+								}
+								subdirs = append(subdirs, p)
+								continue
+							}
+							files = append(files, fileRec{
+								name:  r.name,
+								path:  p,
+								size:  r.size,
+								mod:   r.mod,
+								ino:   r.ino,
+								hasID: r.nlink > 1,
+							})
 						}
-						info, err := de.Info()
+					} else {
+						f, err := os.Open(task.dir)
 						if err != nil {
+							taskDone(task.root)
 							continue
 						}
-						rec := fileRec{
-							name: de.Name(),
-							path: p,
-							size: diskUsage(info),
-							mod:  info.ModTime(),
+						des, _ := f.ReadDir(-1) // unsorted single batch
+						f.Close()
+
+						for _, de := range des {
+							// Skip symlinks entirely — they don't contribute to real disk usage.
+							if de.Type()&os.ModeSymlink != 0 {
+								continue
+							}
+							p := filepath.Join(task.dir, de.Name())
+							if de.IsDir() {
+								if mounts[p] {
+									continue // different filesystem
+								}
+								subdirs = append(subdirs, p)
+								continue
+							}
+							info, err := de.Info()
+							if err != nil {
+								continue
+							}
+							rec := fileRec{
+								name: de.Name(),
+								path: p,
+								size: diskUsage(info),
+								mod:  info.ModTime(),
+							}
+							rec.dev, rec.ino, rec.hasID = fileID(info)
+							files = append(files, rec)
 						}
-						rec.dev, rec.ino, rec.hasID = fileID(info)
-						files = append(files, rec)
 					}
 
 					// Merge this directory's results with one lock acquisition.
