@@ -71,7 +71,7 @@ Switch to permanent mode with `tab` when you're sure. Confirmation dialog keeps 
 
 ### Clear app caches safely
 
-The CACHES tab finds known caches — dev tools (npm, go, cargo, Xcode…), browsers, messengers (Telegram, WhatsApp, Slack, Discord) and popular apps — and lets you trash or delete them. Docker is cleaned via `docker system prune -a -f` with confirmation.
+The CACHES tab finds known caches — dev tools (npm, go, cargo, Xcode…), browsers, messengers (Telegram, WhatsApp, Slack, Discord) and popular apps — and lets you trash or delete them. Docker is cleaned via `docker system prune -a -f` with confirmation. It also surfaces the invisible space eaters on macOS: old iOS device backups and local Time Machine snapshots (deleted via `tmutil`, always confirmed).
 
 ### Reclaim build artifacts from old projects
 
