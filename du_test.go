@@ -103,3 +103,14 @@ func TestDeepScanUsesAllocatedSize(t *testing.T) {
 		t.Errorf("dirSizes = %d, want allocated size", final.dirSizes[sub])
 	}
 }
+
+func TestMountPointsUnder(t *testing.T) {
+	// A temp dir never contains mount points — must return an empty set.
+	if got := mountPointsUnder(t.TempDir()); len(got) != 0 {
+		t.Errorf("mountPointsUnder(tempdir) = %v, want empty", got)
+	}
+	// The filesystem root contains at least one mount on darwin/linux.
+	if got := mountPointsUnder("/"); got == nil {
+		t.Log("no mounts found under / (acceptable on some systems)")
+	}
+}

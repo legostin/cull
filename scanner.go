@@ -333,8 +333,9 @@ func startDeepScan(root string, topN int, firstLevelDirs []string) chan deepScan
 
 	ch := make(chan deepScanMsg, 2)
 
-	// Get the device ID of the root to skip cross-device mounts (e.g. /proc, /sys).
-	rootDev, hasRootDev := deviceID(root)
+	// Mount points under root mark filesystem boundaries (e.g. /proc, /sys,
+	// external volumes) — enumerated once instead of a stat per directory.
+	mounts := mountPointsUnder(root)
 
 	go func() {
 		defer close(ch)
@@ -385,20 +386,65 @@ func startDeepScan(root string, topN int, firstLevelDirs []string) chan deepScan
 			}
 		}
 
-		// --- Phase 2: parallel walk of first-level directories ---
+		// --- Phase 2: work-stealing walk ---
+		// The queue holds single directories (listed non-recursively); workers
+		// push subdirectories back, so one huge first-level dir is drained by
+		// all workers instead of pinning a single one.
 		numWorkers := runtime.NumCPU()
-		if numWorkers > len(firstLevelDirs) {
-			numWorkers = len(firstLevelDirs)
-		}
 		if numWorkers < 1 {
 			numWorkers = 1
 		}
 
-		work := make(chan string, len(firstLevelDirs))
-		for _, d := range firstLevelDirs {
-			work <- d
+		type scanTask struct {
+			dir  string // directory to list
+			root string // first-level dir this work is attributed to
 		}
-		close(work)
+		var (
+			qmu     sync.Mutex
+			queue   []scanTask
+			qcond   = sync.NewCond(&qmu)
+			pending int // enqueued but not yet fully processed tasks
+		)
+		push := func(t scanTask) {
+			qmu.Lock()
+			pending++
+			queue = append(queue, t)
+			qmu.Unlock()
+			qcond.Signal()
+		}
+		pop := func() (scanTask, bool) {
+			qmu.Lock()
+			defer qmu.Unlock()
+			for len(queue) == 0 && pending > 0 {
+				qcond.Wait()
+			}
+			if len(queue) == 0 {
+				return scanTask{}, false
+			}
+			t := queue[len(queue)-1] // LIFO: better path locality
+			queue = queue[:len(queue)-1]
+			return t, true
+		}
+		finish := func() {
+			qmu.Lock()
+			pending--
+			done := pending == 0
+			qmu.Unlock()
+			if done {
+				qcond.Broadcast()
+			}
+		}
+
+		// Per-root outstanding task counts drive the scanning indicator.
+		rootPending := make(map[string]int, len(firstLevelDirs))
+		for _, d := range firstLevelDirs {
+			scanningDirs[d] = true
+			rootPending[d] = 0
+		}
+		for _, d := range firstLevelDirs {
+			rootPending[d]++
+			push(scanTask{dir: d, root: d})
+		}
 
 		// Dedicated snapshot ticker goroutine.
 		const snapshotInterval = 200 * time.Millisecond
@@ -432,78 +478,112 @@ func startDeepScan(root string, topN int, firstLevelDirs []string) chan deepScan
 			}
 		}()
 
+		// fileRec is a locally collected file, merged under mu once per dir.
+		type fileRec struct {
+			name  string
+			path  string
+			size  int64
+			mod   time.Time
+			dev   uint64
+			ino   uint64
+			hasID bool
+		}
+
+		taskDone := func(root string) {
+			mu.Lock()
+			rootPending[root]--
+			if rootPending[root] == 0 {
+				delete(scanningDirs, root)
+				delete(rootPending, root)
+			}
+			mu.Unlock()
+			finish()
+		}
+
 		var wg sync.WaitGroup
 		wg.Add(numWorkers)
 		for i := 0; i < numWorkers; i++ {
 			go func() {
 				defer wg.Done()
-				for dirPath := range work {
-					mu.Lock()
-					scanningDirs[dirPath] = true
-					mu.Unlock()
+				for {
+					task, ok := pop()
+					if !ok {
+						return
+					}
 
-					_ = filepath.WalkDir(dirPath, func(path string, d os.DirEntry, err error) error {
-						if err != nil {
-							return nil
-						}
+					f, err := os.Open(task.dir)
+					if err != nil {
+						taskDone(task.root)
+						continue
+					}
+					des, _ := f.ReadDir(-1) // unsorted single batch
+					f.Close()
 
+					var files []fileRec
+					var subdirs []string
+					for _, de := range des {
 						// Skip symlinks entirely — they don't contribute to real disk usage.
-						if d.Type()&os.ModeSymlink != 0 {
-							return nil
+						if de.Type()&os.ModeSymlink != 0 {
+							continue
 						}
-
-						if d.IsDir() {
-							// Skip directories on different filesystems.
-							if hasRootDev && path != dirPath {
-								if dev, ok := deviceID(path); ok && dev != rootDev {
-									return filepath.SkipDir
-								}
+						p := filepath.Join(task.dir, de.Name())
+						if de.IsDir() {
+							if mounts[p] {
+								continue // different filesystem
 							}
-							return nil
+							subdirs = append(subdirs, p)
+							continue
 						}
-
-						info, err := d.Info()
+						info, err := de.Info()
 						if err != nil {
-							return nil
+							continue
 						}
-						size := diskUsage(info)
+						rec := fileRec{
+							name: de.Name(),
+							path: p,
+							size: diskUsage(info),
+							mod:  info.ModTime(),
+						}
+						rec.dev, rec.ino, rec.hasID = fileID(info)
+						files = append(files, rec)
+					}
 
-						mu.Lock()
-						if dev, ino, ok := fileID(info); ok {
-							if seenInodes[[2]uint64{dev, ino}] {
-								mu.Unlock()
-								return nil
+					// Merge this directory's results with one lock acquisition.
+					mu.Lock()
+					for _, r := range files {
+						if r.hasID {
+							if seenInodes[[2]uint64{r.dev, r.ino}] {
+								continue
 							}
-							seenInodes[[2]uint64{dev, ino}] = true
+							seenInodes[[2]uint64{r.dev, r.ino}] = true
 						}
-						dirSizes[dirPath] += size
-
+						dirSizes[task.root] += r.size
 						if h.Len() < topN {
 							heap.Push(h, Entry{
-								Name:    d.Name(),
-								Path:    path,
-								Size:    size,
+								Name:    r.name,
+								Path:    r.path,
+								Size:    r.size,
 								Sized:   true,
-								ModTime: info.ModTime(),
+								ModTime: r.mod,
 							})
-						} else if size > (*h)[0].Size {
+						} else if r.size > (*h)[0].Size {
 							heap.Pop(h)
 							heap.Push(h, Entry{
-								Name:    d.Name(),
-								Path:    path,
-								Size:    size,
+								Name:    r.name,
+								Path:    r.path,
+								Size:    r.size,
 								Sized:   true,
-								ModTime: info.ModTime(),
+								ModTime: r.mod,
 							})
 						}
-						mu.Unlock()
-
-						return nil
-					})
-
-					mu.Lock()
-					delete(scanningDirs, dirPath)
+					}
+					rootPending[task.root] += len(subdirs)
 					mu.Unlock()
+
+					for _, sd := range subdirs {
+						push(scanTask{dir: sd, root: task.root})
+					}
+					taskDone(task.root)
 				}
 			}()
 		}
