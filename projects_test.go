@@ -205,3 +205,22 @@ func TestIsIdleSafe(t *testing.T) {
 		t.Error("zero ModTime must not be idle-safe")
 	}
 }
+
+func TestFindArtifactsUsesRelativeProjectNames(t *testing.T) {
+	root := t.TempDir()
+	// Tauri-style: the marker dir has a generic name, the parent is the real project.
+	mkProject(t, filepath.Join(root, "myapp", "src-tauri"), []string{"Cargo.toml"}, []string{"target"})
+	mkProject(t, filepath.Join(root, "toolbox"), []string{"go.mod"}, []string{"vendor"})
+
+	arts := findArtifacts(root)
+	names := map[string]bool{}
+	for _, a := range arts {
+		names[a.ProjectName] = true
+	}
+	if !names[filepath.Join("myapp", "src-tauri")] {
+		t.Errorf("nested project must show its path from the scan root, got %v", names)
+	}
+	if !names["toolbox"] {
+		t.Errorf("first-level project keeps its plain name, got %v", names)
+	}
+}

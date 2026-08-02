@@ -67,6 +67,14 @@ type projectArtifact struct {
 func findArtifacts(root string) []projectArtifact {
 	var out []projectArtifact
 	walkProjects(root, mountPointsUnderFn(root), &out)
+	// Project names are paths relative to the scan root, so nested marker
+	// dirs with generic names (myapp/src-tauri, packages/core) stay
+	// distinguishable in the list.
+	for i := range out {
+		if rel, err := filepath.Rel(root, out[i].ProjectPath); err == nil && rel != "." {
+			out[i].ProjectName = rel
+		}
+	}
 	return out
 }
 
