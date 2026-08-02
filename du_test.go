@@ -114,3 +114,62 @@ func TestMountPointsUnder(t *testing.T) {
 		t.Log("no mounts found under / (acceptable on some systems)")
 	}
 }
+
+func TestDeepScanSkipsMountedFirstLevelDir(t *testing.T) {
+	root := t.TempDir()
+	local := filepath.Join(root, "local")
+	mnt := filepath.Join(root, "mnt")
+	for _, d := range []string{local, mnt} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "f"), make([]byte, 10_000), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	old := mountPointsUnderFn
+	mountPointsUnderFn = func(string) map[string]bool { return map[string]bool{mnt: true} }
+	defer func() { mountPointsUnderFn = old }()
+
+	ch := startDeepScan(root, 10, []string{local, mnt})
+	var final deepScanMsg
+	for msg := range ch {
+		if msg.done {
+			final = msg
+		}
+	}
+	if final.dirSizes[mnt] != 0 {
+		t.Errorf("mounted dir size = %d, want 0 (never scanned)", final.dirSizes[mnt])
+	}
+	if _, ok := final.dirSizes[mnt]; !ok {
+		t.Error("mounted dir must still be reported (as 0) so the UI stops its spinner")
+	}
+	if final.dirSizes[local] == 0 {
+		t.Error("local dir must still be scanned")
+	}
+	for _, e := range final.entries {
+		if filepath.Dir(e.Path) == mnt {
+			t.Errorf("file from the mounted dir leaked into top-N: %s", e.Path)
+		}
+	}
+}
+
+func TestFindArtifactsSkipsMounts(t *testing.T) {
+	root := t.TempDir()
+	mkProject(t, filepath.Join(root, "real"), []string{"package.json"}, []string{"node_modules"})
+	mnt := filepath.Join(root, "share")
+	mkProject(t, filepath.Join(mnt, "remote"), []string{"package.json"}, []string{"node_modules"})
+
+	old := mountPointsUnderFn
+	mountPointsUnderFn = func(string) map[string]bool { return map[string]bool{mnt: true} }
+	defer func() { mountPointsUnderFn = old }()
+
+	arts := findArtifacts(root)
+	if len(arts) != 1 {
+		t.Fatalf("got %d artifacts, want 1 (mounted share must be skipped): %+v", len(arts), arts)
+	}
+	if arts[0].ProjectName != "real" {
+		t.Errorf("kept artifact = %q, want the local project", arts[0].ProjectName)
+	}
+}

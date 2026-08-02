@@ -334,8 +334,10 @@ func startDeepScan(root string, topN int, firstLevelDirs []string) chan deepScan
 	ch := make(chan deepScanMsg, 2)
 
 	// Mount points under root mark filesystem boundaries (e.g. /proc, /sys,
-	// external volumes) — enumerated once instead of a stat per directory.
-	mounts := mountPointsUnder(root)
+	// NFS shares like OrbStack, external volumes) — enumerated once instead
+	// of a stat per directory. cull never crosses them (du -x semantics):
+	// touching network mounts can hang and wake sleeping VMs.
+	mounts := mountPointsUnderFn(root)
 
 	go func() {
 		defer close(ch)
@@ -436,12 +438,15 @@ func startDeepScan(root string, topN int, firstLevelDirs []string) chan deepScan
 		}
 
 		// Per-root outstanding task counts drive the scanning indicator.
+		// First-level dirs that are themselves mount points are not scanned
+		// at all; they report size 0 so the UI stops their spinner.
 		rootPending := make(map[string]int, len(firstLevelDirs))
 		for _, d := range firstLevelDirs {
+			if mounts[d] {
+				dirSizes[d] = 0
+				continue
+			}
 			scanningDirs[d] = true
-			rootPending[d] = 0
-		}
-		for _, d := range firstLevelDirs {
 			rootPending[d]++
 			push(scanTask{dir: d, root: d})
 		}

@@ -62,17 +62,18 @@ type projectArtifact struct {
 }
 
 // findArtifacts walks root and returns all project build artifacts.
-// It never descends into artifact dirs or .git.
+// It never descends into artifact dirs, .git, or other filesystems
+// (network mounts can hang and wake sleeping VMs).
 func findArtifacts(root string) []projectArtifact {
 	var out []projectArtifact
-	walkProjects(root, &out)
+	walkProjects(root, mountPointsUnderFn(root), &out)
 	return out
 }
 
 // walkProjects recursively scans dir, appends found artifacts to out and
 // returns the max mtime of files in the subtree, excluding artifact dirs
-// and .git. Unreadable dirs are skipped silently.
-func walkProjects(dir string, out *[]projectArtifact) time.Time {
+// and .git. Mount points and unreadable dirs are skipped silently.
+func walkProjects(dir string, mounts map[string]bool, out *[]projectArtifact) time.Time {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return time.Time{}
@@ -102,8 +103,12 @@ func walkProjects(dir string, out *[]projectArtifact) time.Time {
 				})
 				continue // sized separately; excluded from idle mtime
 			}
-			if sub := walkProjects(filepath.Join(dir, name), out); sub.After(maxMtime) {
-				maxMtime = sub
+			sub := filepath.Join(dir, name)
+			if mounts[sub] {
+				continue // different filesystem
+			}
+			if m := walkProjects(sub, mounts, out); m.After(maxMtime) {
+				maxMtime = m
 			}
 			continue
 		}
