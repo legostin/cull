@@ -75,7 +75,7 @@ The CACHES tab finds known caches — dev tools (npm, go, cargo, Xcode…), brow
 
 ### Reclaim build artifacts from old projects
 
-The PROJECTS tab scans down from the launch path for project build artifacts — `node_modules`, Rust `target/`, Python `.venv`, Gradle `build/`, Go/PHP `vendor/`, CocoaPods, Terraform and more. Each row shows the artifact size and how long the project has been untouched; projects idle for 6+ months are highlighted green as safe to clean. Artifacts are matched only next to their project marker file (`package.json`, `Cargo.toml`, `go.mod`, …), so an unrelated `build/` directory is never touched.
+The PROJECTS tab scans down from the current directory for project build artifacts — `node_modules`, Rust `target/`, Python `.venv`, Gradle `build/`, Go/PHP `vendor/`, CocoaPods, Terraform and more. Each row shows the artifact size and how long the project has been untouched; projects idle for 6+ months are highlighted green as safe to clean. Artifacts are matched only next to their project marker file (`package.json`, `Cargo.toml`, `go.mod`, …), so an unrelated `build/` directory is never touched.
 
 ### See the map
 
