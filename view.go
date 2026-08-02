@@ -688,10 +688,20 @@ func (m model) View() string {
 		b.WriteString("\n")
 	} else {
 		var help string
+		// BROWSE offers the list/map toggle right in the help line.
+		mapHint := ""
+		if m.activeTab == tabBrowse {
+			word := "map"
+			if m.browseMap {
+				word = "list"
+			}
+			mapHint = fmt.Sprintf(" %s %s", helpKeyStyle.Render("<m>"), word)
+		}
 		if m.readOnly {
-			help = fmt.Sprintf(" %s filter %s sort %s tabs %s help %s quit",
+			help = fmt.Sprintf(" %s filter %s sort%s %s tabs %s help %s quit",
 				helpKeyStyle.Render("<f>"),
 				helpKeyStyle.Render("<t>"),
+				mapHint,
 				helpKeyStyle.Render("<shift>-<tab>"),
 				helpKeyStyle.Render("<?>"),
 				helpKeyStyle.Render("<q>"),
@@ -707,11 +717,12 @@ func (m model) View() string {
 				helpKeyStyle.Render("<q>"),
 			)
 		} else {
-			help = fmt.Sprintf(" %s select %s delete %s filter %s sort %s preview %s del mode %s tabs %s help %s quit",
+			help = fmt.Sprintf(" %s select %s delete %s filter %s sort%s %s preview %s del mode %s tabs %s help %s quit",
 				helpKeyStyle.Render("<s>"),
 				helpKeyStyle.Render("<d>"),
 				helpKeyStyle.Render("<f>"),
 				helpKeyStyle.Render("<t>"),
+				mapHint,
 				helpKeyStyle.Render("<e>"),
 				helpKeyStyle.Render("<tab>"),
 				helpKeyStyle.Render("<shift>-<tab>"),

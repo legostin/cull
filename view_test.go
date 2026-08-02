@@ -322,3 +322,23 @@ func TestRenderMapEmptyDir(t *testing.T) {
 		t.Error("empty dir must show a hint")
 	}
 }
+
+func TestHelpLineShowsMapToggle(t *testing.T) {
+	m := newTestModel()
+	m.tabs[tabBrowse].entries = []Entry{{Name: "a", Size: 5, Sized: true}}
+	out := m.View()
+	if !strings.Contains(out, "map") {
+		t.Error("BROWSE help line must mention the m/map toggle")
+	}
+	m.browseMap = true
+	out = m.View()
+	if !strings.Contains(out, "list") {
+		t.Error("map-mode help line must offer m/list")
+	}
+	m.activeTab = tabCaches
+	m.browseMap = false
+	out = m.View()
+	if strings.Contains(out, "<m> map") {
+		t.Error("non-BROWSE tabs must not advertise the map toggle")
+	}
+}
