@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -840,5 +842,124 @@ func TestKey_S_CannotSelectSnapshotsRow(t *testing.T) {
 	rm := result.(model)
 	if len(rm.tab().selected) != 0 {
 		t.Error("snapshots row must not be selectable")
+	}
+}
+
+// newPagingTestModel builds a model with enough entries to page through.
+func newPagingTestModel(n int) model {
+	m := newModel("/tmp/test", 100, false, false)
+	m.width = 120
+	m.height = 40
+	tab := m.tab()
+	tab.allEntries = make([]Entry, n)
+	for i := range tab.allEntries {
+		tab.allEntries[i] = Entry{
+			Name: fmt.Sprintf("file%03d", i),
+			Path: fmt.Sprintf("/tmp/test/file%03d", i),
+			Size: int64(n - i),
+		}
+	}
+	tab.entries = append([]Entry{}, tab.allEntries...)
+	return m
+}
+
+func TestKey_Home_JumpToTop(t *testing.T) {
+	m := newPagingTestModel(100)
+	m.tab().cursor = 57
+	m.clampOffset()
+	result, _ := m.Update(specialKeyMsg(tea.KeyHome))
+	rm := result.(model)
+	if rm.tab().cursor != 0 {
+		t.Errorf("cursor = %d, want 0", rm.tab().cursor)
+	}
+	if rm.tab().offset != 0 {
+		t.Errorf("offset = %d, want 0", rm.tab().offset)
+	}
+}
+
+func TestKey_End_JumpToBottom(t *testing.T) {
+	m := newPagingTestModel(100)
+	m.tab().cursor = 0
+	result, _ := m.Update(specialKeyMsg(tea.KeyEnd))
+	rm := result.(model)
+	if rm.tab().cursor != 99 {
+		t.Errorf("cursor = %d, want 99", rm.tab().cursor)
+	}
+	if got := rm.tab().offset; got != 99-rm.visibleRowCount()+1 {
+		t.Errorf("offset = %d, want %d", got, 99-rm.visibleRowCount()+1)
+	}
+}
+
+func TestKey_End_EmptyList(t *testing.T) {
+	m := newPagingTestModel(0)
+	result, _ := m.Update(specialKeyMsg(tea.KeyEnd))
+	rm := result.(model)
+	if rm.tab().cursor != 0 {
+		t.Errorf("cursor = %d, want 0", rm.tab().cursor)
+	}
+}
+
+func TestKey_PgDown_MovesOnePage(t *testing.T) {
+	m := newPagingTestModel(100)
+	m.tab().cursor = 0
+	result, _ := m.Update(specialKeyMsg(tea.KeyPgDown))
+	rm := result.(model)
+	want := rm.visibleRowCount()
+	if rm.tab().cursor != want {
+		t.Errorf("cursor = %d, want %d (one page)", rm.tab().cursor, want)
+	}
+}
+
+func TestKey_PgDown_ClampsToLastEntry(t *testing.T) {
+	m := newPagingTestModel(100)
+	m.tab().cursor = 95
+	m.clampOffset()
+	result, _ := m.Update(specialKeyMsg(tea.KeyPgDown))
+	rm := result.(model)
+	if rm.tab().cursor != 99 {
+		t.Errorf("cursor = %d, want 99", rm.tab().cursor)
+	}
+}
+
+func TestKey_PgUp_MovesOnePage(t *testing.T) {
+	m := newPagingTestModel(100)
+	m.tab().cursor = 60
+	m.clampOffset()
+	result, _ := m.Update(specialKeyMsg(tea.KeyPgUp))
+	rm := result.(model)
+	want := 60 - rm.visibleRowCount()
+	if rm.tab().cursor != want {
+		t.Errorf("cursor = %d, want %d (one page up)", rm.tab().cursor, want)
+	}
+}
+
+func TestKey_PgUp_ClampsToZero(t *testing.T) {
+	m := newPagingTestModel(100)
+	m.tab().cursor = 3
+	result, _ := m.Update(specialKeyMsg(tea.KeyPgUp))
+	rm := result.(model)
+	if rm.tab().cursor != 0 {
+		t.Errorf("cursor = %d, want 0", rm.tab().cursor)
+	}
+}
+
+func TestKey_PgDown_EmptyList(t *testing.T) {
+	m := newPagingTestModel(0)
+	result, _ := m.Update(specialKeyMsg(tea.KeyPgDown))
+	rm := result.(model)
+	if rm.tab().cursor != 0 {
+		t.Errorf("cursor = %d, want 0", rm.tab().cursor)
+	}
+}
+
+func TestHelp_ListsPagingKeys(t *testing.T) {
+	m := newPagingTestModel(10)
+	m.height = 80 // tall enough that the NAVIGATION section is fully visible
+	m.mode = modeHelp
+	out := m.View()
+	for _, want := range []string{"home", "end", "pgup", "pgdn"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("help overlay missing %q", want)
+		}
 	}
 }

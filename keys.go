@@ -115,15 +115,35 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmd := m.resetNameScroll()
 		return m, cmd
 
-	case "g":
+	case "g", "home":
 		t.cursor = 0
 		m.clampOffset()
 		cmd := m.resetNameScroll()
 		return m, cmd
 
-	case "G":
+	case "G", "end":
 		if len(t.entries) > 0 {
 			t.cursor = len(t.entries) - 1
+		}
+		m.clampOffset()
+		cmd := m.resetNameScroll()
+		return m, cmd
+
+	case "pgdown":
+		if n := len(t.entries); n > 0 {
+			t.cursor += m.visibleRowCount()
+			if t.cursor > n-1 {
+				t.cursor = n - 1
+			}
+		}
+		m.clampOffset()
+		cmd := m.resetNameScroll()
+		return m, cmd
+
+	case "pgup":
+		t.cursor -= m.visibleRowCount()
+		if t.cursor < 0 {
+			t.cursor = 0
 		}
 		m.clampOffset()
 		cmd := m.resetNameScroll()
